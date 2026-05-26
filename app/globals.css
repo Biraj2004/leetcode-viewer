@@ -1,0 +1,47 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  outline: none;
+  font-family: inherit;
+}
+
+/* Spinner used in ResultTab */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Shiki syntax highlight pre/code ─────────────────────────────────────── */
+
+/* The <pre> wrapper Shiki generates — we strip its background via transformer */
+.shiki-pre {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: visible;
+}
+
+/* The <code> inside — let it flow naturally */
+.shiki-code {
+  display: block;
+  background: transparent !important;
+}
+
+/* Shiki wraps each line in a <span class="line"> */
+.shiki-pre .line {
+  display: block;
+  min-height: 20px; /* matches EDITOR_LINE_HEIGHT */
+}
