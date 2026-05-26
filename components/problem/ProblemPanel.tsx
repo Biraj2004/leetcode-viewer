@@ -7,18 +7,16 @@
  */
 
 import { useState } from "react";
-import { FileText, Lightbulb, BookOpen, History, MessageSquare } from "lucide-react";
+import { FileText, BookOpen, History, MessageSquare } from "lucide-react";
 import { TabBar } from "../ui/TabBar";
 import { DescriptionTab } from "./DescriptionTab";
-import { HintsTab } from "./HintsTab";
 import { SolutionTab } from "./SolutionTab";
 import type { ParsedProblem } from "../../types/ui";
 
-type ProblemTabKey = "description" | "hints" | "solution" | "submissions" | "solutions";
+type ProblemTabKey = "description" | "solution" | "submissions" | "solutions";
 
 const TABS = [
   { key: "description", label: "Description", icon: <FileText size={14} /> },
-  { key: "hints",       label: "Hints",       icon: <Lightbulb size={14} /> },
   { key: "solution",    label: "Editorial",   icon: <BookOpen size={14} /> },
   { key: "solutions",   label: "Solutions",   icon: <MessageSquare size={14} /> },
   { key: "submissions", label: "Submissions", icon: <History size={14} /> },
@@ -35,8 +33,6 @@ export function ProblemPanel({ problem }: ProblemPanelProps) {
     switch (activeTab) {
       case "description":
         return <DescriptionTab problem={problem} />;
-      case "hints":
-        return <HintsTab hints={problem.hints} />;
       case "solution":
         return <SolutionTab markdown={problem.solutionMarkdown} blocks={problem.solutionBlocks} />;
       default:

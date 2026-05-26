@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 
 interface CollapsibleSectionProps {
@@ -43,18 +43,31 @@ export function CollapsibleSection({
           marginBottom: isOpen ? 10 : 0,
           width: "100%",
           textAlign: "left",
+          transition: "margin-bottom 180ms ease",
         }}
       >
         {icon}
         <span style={{ flex: 1 }}>{title}</span>
-        {isOpen ? (
-          <ChevronDown size={14} style={{ color: "#6c7086" }} />
-        ) : (
-          <ChevronRight size={14} style={{ color: "#6c7086" }} />
-        )}
+        <ChevronDown
+          size={14}
+          style={{
+            color: "#6c7086",
+            transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
+            transition: "transform 200ms ease",
+          }}
+        />
       </button>
 
-      {isOpen && children}
+      <div
+        style={{
+          maxHeight: isOpen ? "9999px" : "0px",
+          opacity: isOpen ? 1 : 0,
+          overflow: "hidden",
+          transition: "max-height 240ms ease, opacity 180ms ease",
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

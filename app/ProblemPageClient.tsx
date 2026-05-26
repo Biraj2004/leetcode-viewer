@@ -42,6 +42,11 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
     setResult(null);
   }, [problems.length]);
 
+  const goToProblem = useCallback((index: number) => {
+    setProblemIndex(Math.max(0, Math.min(problems.length - 1, index)));
+    setResult(null);
+  }, [problems.length]);
+
   const handleRun = useCallback(async () => {
     if (!editorRef.current) return;
     setIsRunning(true);
@@ -106,10 +111,12 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
     >
       <TopBar
         problem={problem}
+        problems={problems}
         problemIndex={problemIndex}
         totalProblems={problems.length}
         onPrev={goToPrev}
         onNext={goToNext}
+        onSelectProblem={goToProblem}
         onRun={handleRun}
         onSubmit={handleSubmit}
         isRunning={isRunning}

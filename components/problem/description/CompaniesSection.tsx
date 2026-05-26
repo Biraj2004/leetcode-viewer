@@ -13,34 +13,47 @@ interface CompaniesSectionProps {
 }
 
 export function CompaniesSection({ companyStats }: CompaniesSectionProps) {
-  // Merge all periods, deduplicate by slug, keep highest count
-  const allCompanies = [
-    ...companyStats.threeMonths,
-    ...companyStats.sixMonths,
-    ...companyStats.moreThanSixMonths,
+  const groups: Array<{
+    title: string;
+    companies: CompanyStats["threeMonths"];
+  }> = [
+    { title: "0 - 3 Months", companies: companyStats.threeMonths },
+    { title: "3 - 6 Months", companies: companyStats.sixMonths },
+    { title: "6+ Months", companies: companyStats.moreThanSixMonths },
   ];
 
-  const deduped = new Map<string, { name: string; count: number }>();
-  for (const c of allCompanies) {
-    const existing = deduped.get(c.slug);
-    if (!existing || c.timesEncountered > existing.count) {
-      deduped.set(c.slug, { name: c.name, count: c.timesEncountered });
-    }
-  }
+  const hasAnyCompanies = groups.some((group) => group.companies.length > 0);
 
-  const companies = Array.from(deduped.values()).sort((a, b) => b.count - a.count);
-
-  if (companies.length === 0) return null;
+  if (!hasAnyCompanies) return null;
 
   return (
     <CollapsibleSection
       title="Companies"
       icon={<Building2 size={14} style={{ color: "#6c7086" }} />}
     >
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {companies.map((c) => (
-          <TagBadge key={c.name} label={c.name} count={c.count} />
-        ))}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {groups.map((group) => {
+          if (group.companies.length === 0) return null;
+          return (
+            <div key={group.title} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ color: "#bac2de", fontSize: 12, fontWeight: 600 }}>
+                {group.title}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {group.companies
+                  .slice()
+                  .sort((a, b) => b.timesEncountered - a.timesEncountered)
+                  .map((company) => (
+                    <TagBadge
+                      key={`${group.title}-${company.slug}`}
+                      label={company.name}
+                      count={company.timesEncountered}
+                    />
+                  ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </CollapsibleSection>
   );

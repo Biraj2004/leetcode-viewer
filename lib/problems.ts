@@ -1,22 +1,42 @@
 /**
  * problems.ts
  *
- * Central registry of all available problems.
- * Import the raw JSONs here and export a sorted list of ParsedProblems.
- * Adding a new problem = drop the JSON in testjson/ and add one line here.
+ * Auto-loads all problem JSON files from testjson/.
+ * Add a new problem by dropping a "*.mock.json" file in that folder.
  */
 
+import "server-only";
+import fs from "node:fs";
+import path from "node:path";
 import { parseJson } from "./parseJson";
 import type { RawProblemJson } from "../types/problem";
 import type { ParsedProblem } from "../types/ui";
 
-import twoSumJson          from "../testjson/two-sum.mock.json";
-import rotateImageJson     from "../testjson/rotate-image.mock.json";
-import mergeKListsJson     from "../testjson/merge-k-sorted-lists.mock.json";
+const TEST_JSON_DIR = path.join(process.cwd(), "testjson");
 
-// Parse once at module load (server-side, build time)
-export const ALL_PROBLEMS: ParsedProblem[] = [
-  parseJson(twoSumJson          as unknown as RawProblemJson),
-  parseJson(rotateImageJson     as unknown as RawProblemJson),
-  parseJson(mergeKListsJson     as unknown as RawProblemJson),
-];
+function loadProblemsFromDisk(): ParsedProblem[] {
+  if (!fs.existsSync(TEST_JSON_DIR)) return [];
+
+  const fileNames = fs
+    .readdirSync(TEST_JSON_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".mock.json"))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+
+  const loaded: ParsedProblem[] = [];
+
+  for (const fileName of fileNames) {
+    const fullPath = path.join(TEST_JSON_DIR, fileName);
+    try {
+      const rawText = fs.readFileSync(fullPath, "utf8");
+      const rawJson = JSON.parse(rawText) as RawProblemJson;
+      loaded.push(parseJson(rawJson));
+    } catch (error) {
+      console.warn(`Skipping invalid problem JSON: ${fileName}`, error);
+    }
+  }
+
+  return loaded;
+}
+
+export const ALL_PROBLEMS: ParsedProblem[] = loadProblemsFromDisk();

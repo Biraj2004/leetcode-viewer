@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Code Playground",
-  description: "LeetCode-style playground built with Next.js",
+  title: "Leetcode Viewer",
+  description: "Leetcode Viewer built with Next.js",
 };
 
 export default function RootLayout({

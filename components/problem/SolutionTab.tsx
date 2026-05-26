@@ -94,6 +94,11 @@ const LANG_LABELS: Record<string, string> = {
 const LANG_ORDER = ["cpp", "java", "python3", "javascript", "typescript", "golang"];
 
 function PlaygroundBlock({ codes }: { codes: PlaygroundCode[] }) {
+  const LINE_HEIGHT_PX = 20;
+  const VERTICAL_PADDING_PX = 32;
+  const MIN_CODE_BOX_HEIGHT = 120;
+  const MAX_CODE_BOX_HEIGHT = 360;
+
   const sorted = useMemo(() => [...codes].sort((a, b) => {
     const ai = LANG_ORDER.indexOf(a.langSlug);
     const bi = LANG_ORDER.indexOf(b.langSlug);
@@ -105,6 +110,16 @@ function PlaygroundBlock({ codes }: { codes: PlaygroundCode[] }) {
 
   const [activeIdx, setActiveIdx] = useState(0);
   const active = sorted[activeIdx];
+  const lineCount = useMemo(
+    () => (active?.code ? active.code.split(/\r?\n/).length : 0),
+    [active?.code],
+  );
+  const neededHeight = Math.max(
+    MIN_CODE_BOX_HEIGHT,
+    lineCount * LINE_HEIGHT_PX + VERTICAL_PADDING_PX,
+  );
+  const boxHeight = Math.min(MAX_CODE_BOX_HEIGHT, neededHeight);
+  const shouldScrollY = neededHeight > MAX_CODE_BOX_HEIGHT;
 
   return (
     <div style={{ border: "1px solid #313244", borderRadius: 8, overflow: "hidden", margin: "0 0 20px" }}>
@@ -130,7 +145,9 @@ function PlaygroundBlock({ codes }: { codes: PlaygroundCode[] }) {
       {/* Code */}
       <pre style={{
         margin: 0, padding: "16px", backgroundColor: "#11111b",
-        overflowX: "auto", fontSize: 12, lineHeight: 1.65,
+        overflowX: "auto", overflowY: shouldScrollY ? "auto" : "hidden",
+        height: boxHeight,
+        fontSize: 12, lineHeight: 1.65,
         fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
         color: "#cdd6f4",
       }}>

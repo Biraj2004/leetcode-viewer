@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import { Lightbulb, ChevronDown, ChevronRight } from "lucide-react";
+import { Lightbulb, ChevronDown } from "lucide-react";
 
 interface HintsTabProps {
   hints: string[];
@@ -88,26 +88,37 @@ export function HintsTab({ hints }: HintsTabProps) {
                 </span>
                 <span>Hint {i + 1}</span>
               </div>
-              {expanded[i] ? (
-                <ChevronDown size={14} style={{ color: "#6c7086", flexShrink: 0 }} />
-              ) : (
-                <ChevronRight size={14} style={{ color: "#6c7086", flexShrink: 0 }} />
-              )}
+              <ChevronDown
+                size={14}
+                style={{
+                  color: "#6c7086",
+                  flexShrink: 0,
+                  transform: expanded[i] ? "rotate(0deg)" : "rotate(-90deg)",
+                  transition: "transform 200ms ease",
+                }}
+              />
             </button>
 
-            {expanded[i] && (
+            <div
+              style={{
+                maxHeight: expanded[i] ? "9999px" : "0px",
+                opacity: expanded[i] ? 1 : 0,
+                overflow: "hidden",
+                transition: "max-height 240ms ease, opacity 180ms ease",
+                borderTop: expanded[i] ? "1px solid #313244" : "1px solid transparent",
+              }}
+            >
               <div
                 style={{
                   padding: "12px 16px",
                   fontSize: 13,
                   color: "#a6adc8",
                   lineHeight: 1.65,
-                  borderTop: "1px solid #313244",
                   backgroundColor: "#11111b",
                 }}
                 dangerouslySetInnerHTML={{ __html: hint }}
               />
-            )}
+            </div>
           </div>
         ))}
       </div>

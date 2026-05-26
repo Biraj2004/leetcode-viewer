@@ -6,7 +6,7 @@
  * Closes when clicking outside via a fixed overlay.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import type { LanguageOption, LanguageKey } from "../../types/ui";
 
@@ -18,8 +18,29 @@ interface LanguageSelectorProps {
 
 export function LanguageSelector({ languages, selected, onSelect }: LanguageSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const ANIMATION_MS = 180;
 
   const selectedLabel = languages.find((l) => l.value === selected)?.label ?? selected;
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsMounted(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => setIsMounted(false), ANIMATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen]);
 
   function handleSelect(lang: LanguageKey) {
     onSelect(lang);
@@ -46,15 +67,31 @@ export function LanguageSelector({ languages, selected, onSelect }: LanguageSele
         }}
       >
         <span>{selectedLabel}</span>
-        <ChevronDown size={13} style={{ color: "#6c7086" }} />
+        <ChevronDown
+          size={13}
+          style={{
+            color: "#6c7086",
+            transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 180ms ease",
+          }}
+        />
       </button>
 
       {/* Dropdown */}
-      {isOpen && (
+      {isMounted && (
         <>
           {/* Click-outside overlay */}
-          <div
-            style={{ position: "fixed", inset: 0, zIndex: 10 }}
+          <button
+            aria-label="Close language dropdown"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10,
+              border: "none",
+              background: "transparent",
+              opacity: isOpen ? 1 : 0,
+              transition: `opacity ${ANIMATION_MS}ms ease`,
+            }}
             onClick={() => setIsOpen(false)}
           />
 
@@ -70,6 +107,10 @@ export function LanguageSelector({ languages, selected, onSelect }: LanguageSele
               padding: "4px 0",
               zIndex: 20,
               boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+              opacity: isOpen ? 1 : 0,
+              transform: isOpen ? "translateY(0px) scale(1)" : "translateY(-6px) scale(0.98)",
+              transformOrigin: "top left",
+              transition: `opacity ${ANIMATION_MS}ms ease, transform ${ANIMATION_MS}ms ease`,
             }}
           >
             {languages.map((lang) => {

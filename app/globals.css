@@ -11,6 +11,31 @@ body {
   height: 100%;
 }
 
+/* Thin scrollbar styling across the app */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #5b6078 #1a1c2c;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #1a1c2c;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #5b6078;
+  border-radius: 999px;
+  border: 2px solid #1a1c2c;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #72789a;
+}
+
 button,
 input,
 select,
