@@ -12,13 +12,24 @@ import { parseJson } from "./parseJson";
 import type { RawProblemJson } from "../types/problem";
 import type { ParsedProblem } from "../types/ui";
 
-const TEST_JSON_DIR = path.join(process.cwd(), "testjson");
+const TEST_JSON_DIR_CANDIDATES = [
+  path.join(process.cwd(), "testjson"),
+  path.join(process.cwd(), ".next", "testjson"),
+];
+
+function resolveTestJsonDir(): string | null {
+  for (const candidate of TEST_JSON_DIR_CANDIDATES) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
 
 function loadProblemsFromDisk(): ParsedProblem[] {
-  if (!fs.existsSync(TEST_JSON_DIR)) return [];
+  const testJsonDir = resolveTestJsonDir();
+  if (!testJsonDir) return [];
 
   const fileNames = fs
-    .readdirSync(TEST_JSON_DIR, { withFileTypes: true })
+    .readdirSync(testJsonDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".mock.json"))
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));
@@ -26,7 +37,7 @@ function loadProblemsFromDisk(): ParsedProblem[] {
   const loaded: ParsedProblem[] = [];
 
   for (const fileName of fileNames) {
-    const fullPath = path.join(TEST_JSON_DIR, fileName);
+    const fullPath = path.join(testJsonDir, fileName);
     try {
       const rawText = fs.readFileSync(fullPath, "utf8");
       const rawJson = JSON.parse(rawText) as RawProblemJson;
