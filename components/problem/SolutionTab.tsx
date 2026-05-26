@@ -303,7 +303,33 @@ export function SolutionTab({ markdown, blocks }: SolutionTabProps) {
           h3: ({ children }) => <h3 style={{ color: "#cdd6f4", fontSize: 15, fontWeight: 600, margin: "18px 0 8px" }}>{children}</h3>,
           h4: ({ children }) => <h4 style={{ color: "#cdd6f4", fontSize: 14, fontWeight: 600, margin: "14px 0 6px" }}>{children}</h4>,
 
-          p: ({ children }) => <p style={{ color: "#a6adc8", fontSize: 14, lineHeight: 1.75, margin: "0 0 14px" }}>{children}</p>,
+          p: ({ children, node }) => {
+            const paragraphNode = node as {
+              children?: Array<{
+                type?: string;
+                tagName?: string;
+                properties?: Record<string, unknown>;
+              }>;
+            };
+
+            const hasEmbeddedBlock =
+              paragraphNode.children?.some((child) => {
+                if (child.type !== "element") return false;
+                if (child.tagName !== "span" && child.tagName !== "div") return false;
+                const props = child.properties ?? {};
+                return Boolean(props["data-playground-id"] || props["data-slides-id"]);
+              }) ?? false;
+
+            if (hasEmbeddedBlock) {
+              return <div style={{ margin: "0 0 14px" }}>{children}</div>;
+            }
+
+            return (
+              <p style={{ color: "#a6adc8", fontSize: 14, lineHeight: 1.75, margin: "0 0 14px" }}>
+                {children}
+              </p>
+            );
+          },
 
           // Intercept <span data-playground-id="..."> and <span data-slides-id="...">
           span: (props) => {
