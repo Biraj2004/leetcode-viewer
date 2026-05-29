@@ -187,6 +187,7 @@ export function parseJson(raw: RawProblemJson): ParsedProblem {
   return {
     titleSlug:    question.titleSlug,
     title:        question.title,
+    questionId:   question.questionId ?? apiQuestion.questionId ?? "",
     difficulty:   question.difficulty,
     descriptionHtml: apiQuestion.content,
     hints:        extractHints(raw),
@@ -200,6 +201,7 @@ export function parseJson(raw: RawProblemJson): ParsedProblem {
     companyStats:  parseCompanyStats(raw),
     codeTemplates,
     testCases:    extractTestCasesFromHtml(apiQuestion.content),
+    exampleTestcaseList: apiQuestion.exampleTestcaseList ?? question.exampleTestcaseList ?? [],
     languages,
   };
 }

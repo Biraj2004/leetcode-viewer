@@ -18,9 +18,240 @@ import {
   CircleUser,
   Flame,
   Search,
+  Eye,
+  EyeOff,
+  X,
+  Cpu,
+  Zap,
 } from "lucide-react";
 import { DifficultyBadge } from "../ui/Badge";
 import type { ParsedProblem } from "../../types/ui";
+
+// ─── Settings modal ───────────────────────────────────────────────────────────
+
+type Provider = "judge0" | "leetcode";
+
+function SettingsModal({ onClose }: { onClose: () => void }) {
+  const [provider, setProvider] = useState<Provider>(() =>
+    (typeof window !== "undefined"
+      ? (localStorage.getItem("lv_provider") as Provider)
+      : null) ?? "judge0"
+  );
+  const [session, setSession] = useState(() =>
+    typeof window !== "undefined" ? (localStorage.getItem("lv_lc_session") ?? "") : ""
+  );
+  const [csrf, setCsrf] = useState(() =>
+    typeof window !== "undefined" ? (localStorage.getItem("lv_lc_csrf") ?? "") : ""
+  );
+  const [showSession, setShowSession] = useState(false);
+  const [showCsrf, setShowCsrf] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function handleSave() {
+    localStorage.setItem("lv_provider", provider);
+    if (provider === "leetcode") {
+      localStorage.setItem("lv_lc_session", session.trim());
+      localStorage.setItem("lv_lc_csrf", csrf.trim());
+    }
+    setSaved(true);
+    setTimeout(() => { setSaved(false); onClose(); }, 800);
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    background: "#11111b",
+    border: "1px solid #313244",
+    borderRadius: 6,
+    color: "#cdd6f4",
+    fontSize: 12,
+    padding: "8px 10px",
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "'Fira Code', monospace",
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0,
+          backgroundColor: "rgba(0,0,0,0.6)",
+          backdropFilter: "blur(4px)",
+          zIndex: 50,
+        }}
+      />
+
+      {/* Panel */}
+      <div
+        style={{
+          position: "fixed",
+          top: "50%", left: "50%",
+          transform: "translate(-50%,-50%)",
+          zIndex: 51,
+          width: "min(460px,92vw)",
+          backgroundColor: "#1e1e2e",
+          border: "1px solid #313244",
+          borderRadius: 14,
+          boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "16px 20px",
+          borderBottom: "1px solid #313244",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Settings size={16} style={{ color: "#89b4fa" }} />
+            <span style={{ color: "#cdd6f4", fontSize: 15, fontWeight: 700 }}>Settings</span>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex", padding:4 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 20 }}>
+
+          {/* Provider selector */}
+          <div>
+            <p style={{ fontSize: 12, fontWeight: 600, color: "#a6adc8", margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Judging Provider</p>
+            <div style={{ display: "flex", gap: 10 }}>
+              {(["judge0", "leetcode"] as Provider[]).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setProvider(p)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    borderRadius: 8,
+                    border: provider === p ? "2px solid #89b4fa" : "1px solid #313244",
+                    backgroundColor: provider === p ? "rgba(137,180,250,0.1)" : "#181825",
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {p === "judge0" ? <Cpu size={20} style={{ color: provider === p ? "#89b4fa" : "#585b70" }} /> : <Zap size={20} style={{ color: provider === p ? "#ffa116" : "#585b70" }} />}
+                  <span style={{ fontSize: 12, fontWeight: 600, color: provider === p ? "#cdd6f4" : "#6c7086" }}>
+                    {p === "judge0" ? "Judge0" : "LeetCode"}
+                  </span>
+                  <span style={{ fontSize: 10, color: "#45475a", textAlign: "center" }}>
+                    {p === "judge0" ? "Local harness runner" : "Official LC judge"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* LeetCode credentials — only shown when LC selected */}
+          {provider === "leetcode" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                backgroundColor: "rgba(249,226,175,0.06)",
+                border: "1px solid rgba(249,226,175,0.2)",
+              }}>
+                <p style={{ margin: 0, fontSize: 11, color: "#f9e2af", lineHeight: 1.5 }}>
+                  Open <strong>leetcode.com</strong> → DevTools → Application → Cookies.<br />
+                  Copy <code>LEETCODE_SESSION</code> and <code>csrftoken</code> values.
+                </p>
+              </div>
+
+              {/* LEETCODE_SESSION */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6c7086", marginBottom: 6, fontFamily: "'Fira Code', monospace" }}>LEETCODE_SESSION</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type={showSession ? "text" : "password"}
+                    value={session}
+                    onChange={(e) => setSession(e.target.value)}
+                    placeholder="Paste your LEETCODE_SESSION cookie value…"
+                    style={{ ...inputStyle, paddingRight: 36 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSession((v) => !v)}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex" }}
+                  >
+                    {showSession ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+              </div>
+
+              {/* csrftoken */}
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6c7086", marginBottom: 6, fontFamily: "'Fira Code', monospace" }}>csrftoken</label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type={showCsrf ? "text" : "password"}
+                    value={csrf}
+                    onChange={(e) => setCsrf(e.target.value)}
+                    placeholder="Paste your csrftoken cookie value…"
+                    style={{ ...inputStyle, paddingRight: 36 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCsrf((v) => !v)}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex" }}
+                  >
+                    {showCsrf ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+              </div>
+
+              {session && csrf && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#a6e3a1" }} />
+                  <span style={{ fontSize: 11, color: "#a6e3a1" }}>Credentials configured</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: "14px 20px",
+          borderTop: "1px solid #313244",
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 10,
+        }}>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "7px 16px", borderRadius: 7, border: "1px solid #313244",
+              background: "transparent", color: "#a6adc8", cursor: "pointer", fontSize: 13,
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            style={{
+              padding: "7px 20px", borderRadius: 7, border: "none",
+              background: saved ? "#a6e3a1" : "#89b4fa",
+              color: "#1e1e2e", cursor: "pointer", fontSize: 13, fontWeight: 600,
+              transition: "background 0.2s",
+            }}
+          >
+            {saved ? "Saved ✓" : "Save"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
 
 interface TopBarProps {
   problem:        ParsedProblem;
@@ -55,7 +286,16 @@ export function TopBar({
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [isDrawerMounted, setIsDrawerMounted] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeProvider, setActiveProvider] = useState<Provider>("judge0");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Sync provider badge from localStorage on mount and when settings close
+  useEffect(() => {
+    setActiveProvider(
+      (localStorage.getItem("lv_provider") as Provider) ?? "judge0"
+    );
+  }, [isSettingsOpen]);
 
   useEffect(() => {
     if (timerActive) {
@@ -141,6 +381,7 @@ export function TopBar({
 
   return (
     <>
+      {isSettingsOpen && <SettingsModal onClose={() => setIsSettingsOpen(false)} />}
       <header
         style={{
           height:          48,
@@ -319,7 +560,7 @@ export function TopBar({
             padding:         "6px 14px",
             borderRadius:    8,
             border:          "none",
-            backgroundColor: "#a6e3a1",
+            backgroundColor: activeProvider === "leetcode" ? "#ffa116" : "#a6e3a1",
             color:           "#1e1e2e",
             cursor:          isSubmitting ? "not-allowed" : "pointer",
             fontSize:        13,
@@ -333,7 +574,34 @@ export function TopBar({
 
         <div style={{ width: 1, height: 20, backgroundColor: "#313244", margin: "0 4px" }} />
 
-        <button style={iconBtn} title="Settings">
+        {/* Provider badge */}
+        <div
+          title={activeProvider === "leetcode" ? "Using LeetCode judge" : "Using Judge0"}
+          style={{
+            padding: "3px 8px",
+            borderRadius: 6,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+            backgroundColor: activeProvider === "leetcode" ? "rgba(255,161,22,0.15)" : "rgba(137,180,250,0.1)",
+            color: activeProvider === "leetcode" ? "#ffa116" : "#89b4fa",
+            border: activeProvider === "leetcode" ? "1px solid rgba(255,161,22,0.3)" : "1px solid rgba(137,180,250,0.25)",
+            textTransform: "uppercase",
+            cursor: "default",
+          }}
+        >
+          {activeProvider === "leetcode" ? "LC Judge" : "Judge0"}
+        </div>
+
+        <button
+          style={{
+            ...iconBtn,
+            color: isSettingsOpen ? "#89b4fa" : iconBtn.color,
+            backgroundColor: isSettingsOpen ? "rgba(137,180,250,0.12)" : "transparent",
+          }}
+          title="Settings"
+          onClick={() => setIsSettingsOpen(true)}
+        >
           <Settings size={17} />
         </button>
 

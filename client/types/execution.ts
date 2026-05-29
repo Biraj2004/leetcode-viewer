@@ -1,4 +1,4 @@
-// Types for code execution via Judge0
+// Types for code execution — shared between Judge0 and LeetCode providers
 
 export interface Judge0Status {
   id: number;
@@ -32,6 +32,20 @@ export interface ExecuteResult {
   compileOutput: string | null;
   time: string | null;
   memory: number | null;
+
+  // ── LeetCode-specific ────────────────────────────────────────────────────
+  provider?: "judge0" | "leetcode";
+  // Submission stats (submit mode, Accepted)
+  runtimePercentile?: number;
+  memoryPercentile?: number;
+  statusRuntime?: string;    // e.g. "3 ms"
+  statusMemory?: string;     // e.g. "18.1 MB"
+  totalCorrect?: number;
+  totalTestcases?: number;
+  // Wrong Answer details
+  lastTestcase?: string;     // the failing input
+  expectedOutput?: string;   // what LC expected
+  codeOutput?: string;       // what our code produced
 }
 
 // Ref handle exposed by EditorPanel to the parent page

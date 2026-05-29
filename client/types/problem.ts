@@ -31,10 +31,12 @@ export interface RawSimilarQuestion {
 }
 
 export interface RawQuestion {
+  questionId: string;        // e.g. "2"
   title: string;
   titleSlug: string;
   difficulty: Difficulty;
   submitUrl: string;
+  exampleTestcaseList?: string[]; // raw data_input strings from LC
   similarQuestions: RawSimilarQuestion[];
   companyTagStatsV2: RawCompanyStats;
   defaultCodeByLang: RawCodeEntry[];
@@ -74,6 +76,7 @@ export interface RawTab {
 }
 
 export interface RawApiQuestion {
+  questionId: string;        // e.g. "2"
   title: string;
   difficulty: Difficulty;
   content: string;          // HTML description
@@ -81,6 +84,7 @@ export interface RawApiQuestion {
   solution?: { content: string };
   companyTagStatsV2: string; // JSON string — needs JSON.parse
   similarQuestions: string;  // JSON string — needs JSON.parse
+  exampleTestcaseList?: string[]; // raw data_input strings
 }
 
 export interface RawProblemJson {

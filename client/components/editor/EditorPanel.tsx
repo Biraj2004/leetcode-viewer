@@ -6,9 +6,13 @@
  * The right panel — orchestrates the code editor, language selection,
  * syntax highlighting, and test case execution.
  *
- * Syntax highlighting: on every code/language change we call a server action
- * that runs Shiki server-side and returns highlighted HTML. This keeps the
- * heavy Shiki bundle off the client entirely.
+ * Supports two execution providers:
+ *   - "judge0"   → wraps code in a harness, sends to /api/judge0
+ *   - "leetcode" → sends raw code to /api/leetcode (LeetCode's own judge)
+ *
+ * The active provider is read from localStorage ("lv_provider").
+ * LeetCode session credentials are also read from localStorage and passed
+ * server-side — they are never stored server-side.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -17,8 +21,18 @@ import { EditorToolbar } from "./EditorToolbar";
 import { CodeEditor } from "./CodeEditor";
 import { TestCasePanel } from "./testcase/TestCasePanel";
 import { JUDGE0_LANG_IDS, buildStdin, buildSourceWithHarness } from "../../lib/codeHarness";
+import { toast } from "../ui/Toast";
 import type { ParsedProblem, LanguageKey } from "../../types/ui";
 import type { ExecuteResult, EditorHandle, CaseResult } from "../../types/execution";
+
+// LeetCode language keys (same as our LanguageKey for the 5 we support)
+const LC_LANG_MAP: Record<LanguageKey, string> = {
+  javascript: "javascript",
+  typescript: "typescript",
+  python3:    "python3",
+  java:       "java",
+  cpp:        "cpp",
+};
 
 interface EditorPanelProps {
   problem: ParsedProblem;
@@ -51,6 +65,21 @@ function normalizeForComparison(raw: string): string {
   }
 }
 
+/** Read provider preference from localStorage (defaults to "judge0") */
+function getProvider(): "judge0" | "leetcode" {
+  if (typeof window === "undefined") return "judge0";
+  return (localStorage.getItem("lv_provider") as "judge0" | "leetcode") ?? "judge0";
+}
+
+/** Read LeetCode credentials from localStorage */
+function getLCCredentials(): { leetcodeSession: string; csrfToken: string } {
+  if (typeof window === "undefined") return { leetcodeSession: "", csrfToken: "" };
+  return {
+    leetcodeSession: localStorage.getItem("lv_lc_session") ?? "",
+    csrfToken:       localStorage.getItem("lv_lc_csrf")    ?? "",
+  };
+}
+
 export function EditorPanel({
   problem,
   editorRef,
@@ -64,6 +93,9 @@ export function EditorPanel({
   const [language, setLanguage] = useState<LanguageKey>(defaultLang);
   const [code, setCode] = useState<string>(problem.codeTemplates[defaultLang] ?? "");
   const [activeTestCaseIndex, setActiveTestCaseIndex] = useState(0);
+
+  // Custom test cases added by the user (LeetCode data_input format)
+  const [customTestCases, setCustomTestCases] = useState<string[]>([]);
 
   // Switch language — reset code to the template for that language
   const handleLanguageChange = useCallback(
@@ -85,6 +117,150 @@ export function EditorPanel({
 
     editorRef.current = {
       execute: async ({ mode = "run" } = {}): Promise<ExecuteResult> => {
+        const provider = getProvider();
+
+        // ── LeetCode provider ─────────────────────────────────────────────
+        if (provider === "leetcode") {
+          const { leetcodeSession, csrfToken } = getLCCredentials();
+          const lcLang = LC_LANG_MAP[language];
+          if (!lcLang) throw new Error(`Unsupported language for LeetCode: ${language}`);
+
+          // For run: use the active test case data_input
+          // Prefer exampleTestcaseList from the problem JSON (raw LC format),
+          // with custom test cases appended.
+          const allInputs = [...(problem.exampleTestcaseList ?? []), ...customTestCases];
+
+          let dataInput: string | undefined;
+          if (mode === "run") {
+            // Active case — map index to either example or custom
+            dataInput = allInputs[activeTestCaseIndex] ?? allInputs[0] ?? "";
+          }
+          // Submit: dataInput is undefined — LC uses its own full test suite
+
+          const response = await fetch("/api/leetcode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode,
+              titleSlug:      problem.titleSlug,
+              questionId:     problem.questionId,
+              lang:           lcLang,
+              typedCode:      code,
+              dataInput,
+              leetcodeSession,
+              csrfToken,
+            }),
+          });
+
+          const payload = await response.json() as Record<string, unknown>;
+
+          // Handle known error codes with toasts
+          if (!response.ok) {
+            const errCode = payload.error as string | undefined;
+            const message = (payload.message as string | undefined) ?? "LeetCode request failed.";
+
+            if (errCode === "SESSION_EXPIRED") {
+              toast.error(message);
+              throw new Error(message);
+            }
+            if (errCode === "RATE_LIMITED") {
+              toast.warning(message);
+              throw new Error(message);
+            }
+            if (errCode === "MISSING_SESSION") {
+              toast.error(message);
+              throw new Error(message);
+            }
+            if (errCode === "TIMEOUT") {
+              toast.warning(message);
+              throw new Error(message);
+            }
+            toast.error(message);
+            throw new Error(message);
+          }
+
+          // ── Map LC response → ExecuteResult ───────────────────────────
+          const statusId   = (payload.status as { id?: number } | undefined)?.id ?? 11;
+          const statusDesc = (payload.status as { description?: string } | undefined)?.description ?? "Unknown";
+
+          if (mode === "run") {
+            // Run mode — build caseResults from compare_result if available
+            const compareStr = (payload.compare_result as string | undefined) ?? "";
+            const codeOutput = (payload.code_output as string | undefined) ?? null;
+            const stdOutput  = (payload.std_output as string | undefined) ?? null;
+            const compileErr = (payload.full_compile_error as string | undefined)
+              ?? (payload.compile_error as string | undefined) ?? null;
+            const runtimeErr = (payload.runtime_error as string | undefined) ?? null;
+            const expectedOut = (payload.expected_output as string | undefined) ?? null;
+            const lastTestcase = (payload.last_testcase as string | undefined) ?? null;
+
+            // Build a per-case result array from compare_result bits
+            const runCaseResults: CaseResult[] = allInputs
+              .slice(0, mode === "run" ? 1 : allInputs.length)
+              .map((_, i) => {
+                const passed = compareStr[i] === "1";
+                return {
+                  caseId:         i + 1,
+                  passed,
+                  expectedOutput: expectedOut ?? "",
+                  actualOutput:   codeOutput ?? "",
+                  stdout:         stdOutput,
+                  stderr:         runtimeErr,
+                  compileOutput:  compileErr,
+                  status:         null,
+                  time:           null,
+                  memory:         null,
+                };
+              });
+
+            const passed = runCaseResults.filter((c) => c.passed).length;
+            return {
+              provider: "leetcode",
+              mode: "run",
+              status: { id: statusId, description: statusDesc },
+              caseResults: runCaseResults,
+              passedCount: passed,
+              totalCases:  runCaseResults.length,
+              stdout:      stdOutput,
+              stderr:      runtimeErr,
+              compileOutput: compileErr,
+              time: null,
+              memory: null,
+              lastTestcase:   lastTestcase ?? undefined,
+              expectedOutput: expectedOut ?? undefined,
+              codeOutput:     codeOutput ?? undefined,
+              totalCorrect:   (payload.total_correct as number | undefined),
+              totalTestcases: (payload.total_testcases as number | undefined),
+            };
+          }
+
+          // Submit mode
+          return {
+            provider: "leetcode",
+            mode: "submit",
+            status: { id: statusId, description: statusDesc },
+            caseResults: [],
+            passedCount:  (payload.total_correct as number | undefined) ?? 0,
+            totalCases:   (payload.total_testcases as number | undefined) ?? 0,
+            stdout:  (payload.std_output as string | undefined) ?? null,
+            stderr:  (payload.runtime_error as string | undefined) ?? null,
+            compileOutput: (payload.full_compile_error as string | undefined)
+              ?? (payload.compile_error as string | undefined) ?? null,
+            time:   null,
+            memory: null,
+            runtimePercentile: (payload.runtime_percentile as number | undefined),
+            memoryPercentile:  (payload.memory_percentile as number | undefined),
+            statusRuntime:     (payload.status_runtime as string | undefined),
+            statusMemory:      (payload.status_memory as string | undefined),
+            totalCorrect:      (payload.total_correct as number | undefined),
+            totalTestcases:    (payload.total_testcases as number | undefined),
+            lastTestcase:      (payload.last_testcase as string | undefined),
+            expectedOutput:    (payload.expected_output as string | undefined),
+            codeOutput:        (payload.code_output as string | undefined),
+          };
+        }
+
+        // ── Judge0 provider (original logic) ─────────────────────────────
         const langId = JUDGE0_LANG_IDS[language];
         if (!langId) throw new Error(`Unsupported language: ${language}`);
 
@@ -152,6 +328,7 @@ export function EditorPanel({
         const primary = caseResults.find((c) => !c.passed) ?? caseResults[0];
 
         return {
+          provider: "judge0",
           mode,
           status: allPassed
             ? { id: 3, description: "Accepted" }
@@ -167,7 +344,7 @@ export function EditorPanel({
         };
       },
     };
-  }, [language, code, problem.testCases, activeTestCaseIndex, editorRef]);
+  }, [language, code, problem, activeTestCaseIndex, customTestCases, editorRef]);
 
   return (
     <div
@@ -227,6 +404,9 @@ export function EditorPanel({
           <Panel defaultSize={38} minSize={15}>
             <TestCasePanel
               testCases={problem.testCases}
+              exampleTestcaseList={problem.exampleTestcaseList}
+              customTestCases={customTestCases}
+              onCustomTestCasesChange={setCustomTestCases}
               activeTestCaseIndex={activeTestCaseIndex}
               onSelectTestCase={setActiveTestCaseIndex}
               isRunning={isRunning}

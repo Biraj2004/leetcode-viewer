@@ -78,6 +78,7 @@ export interface SlideFrame {
 export interface ParsedProblem {
   titleSlug: string;
   title: string;
+  questionId: string;           // numeric string e.g. "2"
   difficulty: Difficulty;
   // HTML string from apiRaw.GetQuestion.content
   descriptionHtml: string;
@@ -93,6 +94,8 @@ export interface ParsedProblem {
   codeTemplates: Record<string, string>;
   // derived from description examples
   testCases: TestCase[];
+  // Raw LeetCode data_input strings (one per example) — used by LC judge
+  exampleTestcaseList: string[];
   // all available languages from defaultCodeByLang
   languages: LanguageOption[];
 }

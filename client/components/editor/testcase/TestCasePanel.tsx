@@ -23,6 +23,11 @@ const BOTTOM_TABS = [
 
 interface TestCasePanelProps {
   testCases: TestCase[];
+  /** Raw LeetCode data_input strings from the JSON (one per example) */
+  exampleTestcaseList: string[];
+  /** User-added custom test cases (raw data_input strings) */
+  customTestCases: string[];
+  onCustomTestCasesChange: (cases: string[]) => void;
   activeTestCaseIndex: number;
   onSelectTestCase: (index: number) => void;
   isRunning: boolean;
@@ -32,6 +37,9 @@ interface TestCasePanelProps {
 
 export function TestCasePanel({
   testCases,
+  exampleTestcaseList,
+  customTestCases,
+  onCustomTestCasesChange,
   activeTestCaseIndex,
   onSelectTestCase,
   isRunning,
@@ -65,6 +73,9 @@ export function TestCasePanel({
         {activeTab === "testcase" ? (
           <TestCaseTab
             testCases={testCases}
+            exampleTestcaseList={exampleTestcaseList}
+            customTestCases={customTestCases}
+            onCustomTestCasesChange={onCustomTestCasesChange}
             activeIndex={activeTestCaseIndex}
             onSelectCase={onSelectTestCase}
           />
