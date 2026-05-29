@@ -3,163 +3,176 @@
 /**
  * SubmissionsTab.tsx
  *
- * Lists past submissions for the current problem (from localStorage).
- * Matches the LeetCode submissions panel UI:
- *   - Left list: Status | Language | Runtime | Memory
- *   - Right detail: Accepted/WA stats, percentile bars, code, failing case
+ * Lists stored submission IDs for the current problem.
+ * On click: fetches full details from LC GraphQL via /api/leetcode (mode: "submission_details").
+ * The distribution charts are shown in the detail view — not during the submit flow.
+ * localStorage only stores the ID + minimal metadata (no code, no percentiles).
  */
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  MessageSquare,
-  Clock,
-  Cpu,
-  ChevronLeft,
-  Check,
-  X,
-  AlertTriangle,
-  Zap,
-  MemoryStick,
-  Trash2,
-  Copy,
+  ChevronLeft, Check, X, Loader2, AlertTriangle, Zap, MemoryStick,
 } from "lucide-react";
-import {
-  getSubmissions,
-  clearSubmissions,
-  type SubmissionRecord,
-} from "../../lib/submissionsStore";
+import { getSubmissionRefs } from "../../lib/submissionsStore";
+import type { StoredSubmissionRef } from "../../lib/submissionsStore";
 
-interface SubmissionsTabProps {
-  questionId: string;
-  /** Used to refresh the list when a new submission arrives */
-  refreshKey?: number;
+/* ─── Types ──────────────────────────────────────────────────────────────────── */
+
+interface SubmissionDetail {
+  code?: string;
+  runtimeDisplay?: string;
+  runtimePercentile?: number;
+  memoryDisplay?: string;
+  memoryPercentile?: number;
+  statusCode?: number;
+  lang?: { name: string; verboseName: string };
+  totalCorrect?: number;
+  totalTestcases?: number;
+  lastTestcase?: string;
+  codeOutput?: string;
+  expectedOutput?: string;
+  compileError?: string;
+  runtimeError?: string;
+  stdOutput?: string;
+  runtime_distribution?: Array<[number, number]>;
+  memory_distribution?: Array<[number, number]>;
+  timestamp?: number;
 }
 
-const monoStyle: React.CSSProperties = {
-  fontFamily: "'Fira Code', 'Cascadia Code', monospace",
-};
+/* ─── Helpers ─────────────────────────────────────────────────────────────────── */
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const monoStyle: React.CSSProperties = { fontFamily: "'Fira Code', 'Cascadia Code', monospace" };
 
-function formatDate(ts: number): string {
-  const d = new Date(ts);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+function formatDate(ts: number) {
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+function formatTime(ts: number) {
+  return new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function isAccepted(r: SubmissionRecord): boolean {
-  return r.statusId === 10 || r.statusId === 3;
-}
-
-function statusColor(r: SubmissionRecord): string {
-  if (isAccepted(r)) return "#a6e3a1";
-  if (r.statusId === 20) return "#f9e2af";   // Compile Error
-  return "#f38ba8";                           // WA / TLE / RE
-}
-
-// ─── Percentile bar ────────────────────────────────────────────────────────────
-
-function PercentileBar({
-  value,
-  label,
-  color,
-  absolute,
-}: {
-  value: number;
-  label: string;
-  color: string;
-  absolute: string;
-}) {
+function StatusDot({ statusId }: { statusId: number }) {
+  const accepted = statusId === 10;
   return (
-    <div
+    <span
       style={{
-        flex: 1,
-        padding: "14px 18px",
-        borderRadius: 8,
-        border: "1px solid #313244",
-        backgroundColor: "#181825",
+        display: "inline-block",
+        width: 7, height: 7,
+        borderRadius: "50%",
+        backgroundColor: accepted ? "#a6e3a1" : "#f38ba8",
+        flexShrink: 0,
       }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        {color === "#89b4fa" ? (
-          <Zap size={14} style={{ color }} />
-        ) : (
-          <MemoryStick size={14} style={{ color }} />
-        )}
-        <span style={{ fontSize: 12, color: "#6c7086" }}>{label}</span>
+    />
+  );
+}
+
+/* ─── Distribution bar chart (shown in detail) ────────────────────────────────── */
+
+function DistributionChart({
+  data, myValue, label, unit, color,
+}: {
+  data: Array<[number, number]>;
+  myValue?: number;
+  label: string;
+  unit: string;
+  color: string;
+}) {
+  if (!data || data.length === 0) return null;
+  const maxPct = Math.max(...data.map(([, p]) => p));
+  const chartH = 72;
+  const myIdx = myValue != null
+    ? data.reduce((best, _, i) =>
+        Math.abs(data[i][0] - myValue) < Math.abs(data[best][0] - myValue) ? i : best, 0)
+    : -1;
+
+  const showEveryN = Math.max(1, Math.floor(data.length / 7));
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        {label}
+      </p>
+      {/* Bars */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: chartH }}>
+        {data.map(([val, pct], i) => {
+          const h = maxPct > 0 ? (pct / maxPct) * chartH : 0;
+          const isMe = i === myIdx;
+          return (
+            <div
+              key={val}
+              title={`${val}${unit}: ${pct.toFixed(2)}%`}
+              style={{ flex: "0 0 4px", height: h, backgroundColor: isMe ? "#f9e2af" : color, borderRadius: "2px 2px 0 0", opacity: isMe ? 1 : 0.7 }}
+            />
+          );
+        })}
       </div>
-      <div style={{ marginBottom: 8 }}>
-        <span style={{ fontSize: 18, fontWeight: 700, color: "#cdd6f4" }}>{absolute}</span>
-        <span style={{ fontSize: 11, color: "#6c7086", marginLeft: 6 }}>
-          Beats <strong style={{ color }}>{value.toFixed(1)}%</strong>
-        </span>
-      </div>
-      <div style={{ height: 4, borderRadius: 2, backgroundColor: "#313244", overflow: "hidden" }}>
-        <div
-          style={{
-            height: "100%",
-            width: `${Math.min(100, value)}%`,
-            borderRadius: 2,
-            backgroundColor: color,
-            transition: "width 0.8s ease",
-          }}
-        />
+      {/* X-axis labels */}
+      <div style={{ display: "flex", gap: 1, marginTop: 2 }}>
+        {data.map(([val], i) => (
+          i % showEveryN === 0 ? (
+            <div key={val} style={{ flex: "0 0 4px", fontSize: 8.5, color: "#45475a", whiteSpace: "nowrap", overflow: "visible" }}>
+              {val}{unit}
+            </div>
+          ) : <div key={val} style={{ flex: "0 0 4px" }} />
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── Submission detail panel ───────────────────────────────────────────────────
+/* ─── Code block ────────────────────────────────────────────────────────────── */
+
+function CodeBox({ label, value, color = "#cdd6f4" }: { label: string; value: string; color?: string }) {
+  return (
+    <div>
+      {label && <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 4px" }}>{label}</p>}
+      <pre style={{
+        margin: 0, padding: "8px 12px", borderRadius: 6,
+        backgroundColor: "#11111b", border: "1px solid #313244",
+        color, fontSize: 12, lineHeight: 1.6, whiteSpace: "pre-wrap",
+        wordBreak: "break-all", maxHeight: 200, overflowY: "auto",
+        ...monoStyle,
+      }}>
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+/* ─── Detail view ────────────────────────────────────────────────────────────── */
 
 function SubmissionDetail({
-  record,
+  ref: subRef,
+  detail,
+  loading,
+  error,
   onBack,
 }: {
-  record: SubmissionRecord;
+  ref: StoredSubmissionRef;
+  detail: SubmissionDetail | null;
+  loading: boolean;
+  error: string | null;
   onBack: () => void;
 }) {
-  const accepted = isAccepted(record);
-  const color = statusColor(record);
-  const isCompileErr = record.statusId === 20;
-  const [copied, setCopied] = useState(false);
+  const accepted = subRef.statusId === 10;
+  const statusColor = accepted ? "#a6e3a1" : "#f38ba8";
 
-  const handleCopyCode = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(record.code);
-    } catch {
-      // fallback for older browsers / HTTP
-      const el = document.createElement("textarea");
-      el.value = record.code;
-      el.style.position = "fixed";
-      el.style.opacity = "0";
-      document.body.appendChild(el);
-      el.focus();
-      el.select();
-      document.execCommand("copy");
-      document.body.removeChild(el);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [record.code]);
+  // Parse runtime ms from runtimeDisplay like "2 ms"
+  const myRuntimeMs = detail?.runtimeDisplay
+    ? parseInt(detail.runtimeDisplay.replace(/[^0-9]/g, ""), 10)
+    : undefined;
+  const myMemoryKB = detail?.memoryDisplay
+    ? Math.round(parseFloat(detail.memoryDisplay.replace(/[^0-9.]/g, "")) * 1024)
+    : undefined;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #313244" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid #313244", flexShrink: 0 }}>
         <button
           onClick={onBack}
-          style={{
-            display: "flex", alignItems: "center", gap: 4,
-            background: "none", border: "none", cursor: "pointer",
-            color: "#6c7086", fontSize: 12, padding: "3px 6px",
-            borderRadius: 5,
-          }}
+          style={{ background: "none", border: "none", color: "#6c7086", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 12, padding: "2px 4px", borderRadius: 4 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#cdd6f4")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "#6c7086")}
         >
           <ChevronLeft size={14} />
           All Submissions
@@ -167,300 +180,274 @@ function SubmissionDetail({
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, overflow: "hidden", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
-        {/* Status row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {accepted
-            ? <Check size={22} style={{ color }} />
-            : <X size={22} style={{ color }} />}
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 700, color }}>{record.status}</div>
-            {record.totalTestcases && (
-              <div style={{ fontSize: 12, color: "#6c7086", marginTop: 2 }}>
-                {record.totalCorrect}/{record.totalTestcases} testcases passed
-              </div>
-            )}
-          </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Status */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {accepted ? <Check size={18} style={{ color: statusColor }} /> : <X size={18} style={{ color: statusColor }} />}
+          <span style={{ fontSize: 18, fontWeight: 700, color: statusColor }}>{subRef.status}</span>
+          {detail?.totalTestcases && (
+            <span style={{ fontSize: 12, color: "#6c7086" }}>({detail.totalCorrect}/{detail.totalTestcases} tests)</span>
+          )}
         </div>
 
-        {/* Percentile bars — Accepted only */}
-        {accepted && (record.runtimePercentile != null || record.memoryPercentile != null) && (
-          <div style={{ display: "flex", gap: 12 }}>
-            {record.runtimePercentile != null && record.runtime && (
-              <PercentileBar
-                label="Runtime"
-                value={record.runtimePercentile}
-                color="#89b4fa"
-                absolute={record.runtime}
-              />
+        {loading && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#6c7086", fontSize: 13 }}>
+            <Loader2 size={14} style={{ animation: "spin 0.8s linear infinite" }} />
+            Loading details…
+          </div>
+        )}
+
+        {error && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#f38ba8", fontSize: 13 }}>
+            <AlertTriangle size={14} />
+            {error}
+          </div>
+        )}
+
+        {detail && !loading && (
+          <>
+            {/* Stats + charts for accepted */}
+            {accepted && (
+              <div style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #313244", backgroundColor: "#181825", display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                  {detail.runtimeDisplay && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <Zap size={13} style={{ color: "#89b4fa" }} />
+                      <div>
+                        <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                          {detail.runtimeDisplay}
+                          {detail.runtimePercentile != null && (
+                            <span style={{ fontSize: 11, fontWeight: 400, color: "#89b4fa", marginLeft: 7 }}>
+                              Beats {detail.runtimePercentile.toFixed(2)}%
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {detail.memoryDisplay && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <MemoryStick size={13} style={{ color: "#a6e3a1" }} />
+                      <div>
+                        <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                          {detail.memoryDisplay}
+                          {detail.memoryPercentile != null && (
+                            <span style={{ fontSize: 11, fontWeight: 400, color: "#a6e3a1", marginLeft: 7 }}>
+                              Beats {detail.memoryPercentile.toFixed(2)}%
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {detail.runtime_distribution && detail.runtime_distribution.length > 0 && (
+                  <DistributionChart data={detail.runtime_distribution} myValue={myRuntimeMs} label="Runtime Distribution" unit="ms" color="#89b4fa" />
+                )}
+                {detail.memory_distribution && detail.memory_distribution.length > 0 && (
+                  <DistributionChart data={detail.memory_distribution} myValue={myMemoryKB} label="Memory Distribution" unit="KB" color="#a6e3a1" />
+                )}
+              </div>
             )}
-            {record.memoryPercentile != null && record.memory && (
-              <PercentileBar
-                label="Memory"
-                value={record.memoryPercentile}
-                color="#a6e3a1"
-                absolute={record.memory}
-              />
-            )}
-          </div>
-        )}
 
-        {/* Compile error */}
-        {isCompileErr && record.compileOutput && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <AlertTriangle size={13} style={{ color: "#f9e2af" }} />
-              <span style={{ fontSize: 12, color: "#f9e2af" }}>Compile Error</span>
+            {/* Error details */}
+            {detail.compileError && <CodeBox label="Compile Error" value={detail.compileError} color="#f9e2af" />}
+            {detail.runtimeError && <CodeBox label="Runtime Error" value={detail.runtimeError} color="#f38ba8" />}
+            {!accepted && detail.lastTestcase && <CodeBox label="Failed Input" value={detail.lastTestcase} />}
+            {!accepted && detail.expectedOutput && <CodeBox label="Expected Output" value={detail.expectedOutput} color="#a6e3a1" />}
+            {!accepted && detail.codeOutput && <CodeBox label="Your Output" value={detail.codeOutput} color="#f38ba8" />}
+            {detail.stdOutput && detail.stdOutput.trim() && <CodeBox label="Stdout" value={detail.stdOutput} color="#89b4fa" />}
+
+            {/* Metadata row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#45475a" }}>
+              <span style={{ padding: "1px 6px", borderRadius: 4, backgroundColor: "#313244", color: "#89b4fa" }}>
+                {detail.lang?.verboseName ?? subRef.lang}
+              </span>
+              <span>{formatDate(subRef.timestamp)} {formatTime(subRef.timestamp)}</span>
             </div>
-            <pre style={{
-              margin: 0, padding: "10px 14px", borderRadius: 6,
-              backgroundColor: "#181825", border: "1px solid rgba(249,226,175,0.3)",
-              color: "#f9e2af", fontSize: 12, whiteSpace: "pre-wrap",
-              wordBreak: "break-all", ...monoStyle,
-            }}>
-              {record.compileOutput}
-            </pre>
-          </div>
-        )}
 
-        {/* Runtime error */}
-        {!isCompileErr && record.stderr && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <AlertTriangle size={13} style={{ color: "#f38ba8" }} />
-              <span style={{ fontSize: 12, color: "#f38ba8" }}>Runtime Error</span>
-            </div>
-            <pre style={{
-              margin: 0, padding: "10px 14px", borderRadius: 6,
-              backgroundColor: "#181825", border: "1px solid rgba(243,139,168,0.3)",
-              color: "#f38ba8", fontSize: 12, whiteSpace: "pre-wrap",
-              wordBreak: "break-all", ...monoStyle,
-            }}>
-              {record.stderr}
-            </pre>
-          </div>
-        )}
-
-        {/* Wrong answer details */}
-        {!accepted && !isCompileErr && !record.stderr && record.lastTestcase && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {[
-              { label: "Input", value: record.lastTestcase, color: "#cdd6f4" },
-              { label: "Expected Output", value: record.expectedOutput, color: "#a6e3a1" },
-              { label: "Your Output", value: record.codeOutput, color: "#f38ba8" },
-            ].map(({ label, value, color: c }) => value ? (
-              <div key={label}>
-                <p style={{ fontSize: 12, color: "#6c7086", margin: "0 0 5px" }}>{label}</p>
+            {/* Code */}
+            {detail.code && (
+              <div>
+                <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 6px" }}>Code</p>
                 <pre style={{
-                  margin: 0, padding: "10px 14px", borderRadius: 6,
-                  backgroundColor: "#181825", border: "1px solid #313244",
-                  color: c, fontSize: 12, whiteSpace: "pre-wrap",
-                  wordBreak: "break-all", ...monoStyle,
+                  margin: 0, padding: "12px 14px", borderRadius: 8,
+                  backgroundColor: "#11111b", border: "1px solid #313244",
+                  color: "#cdd6f4", fontSize: 12, lineHeight: 1.65,
+                  overflowX: "auto", overflowY: "auto",
+                  maxHeight: 280,
+                  whiteSpace: "pre", ...monoStyle,
                 }}>
-                  {value}
+                  {detail.code}
                 </pre>
               </div>
-            ) : null)}
-          </div>
+            )}
+          </>
         )}
-
-        {/* Code */}
-        <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexShrink: 0 }}>
-            <span style={{ fontSize: 12, color: "#6c7086" }}>Code</span>
-            <span style={{
-              fontSize: 11, padding: "1px 6px", borderRadius: 4,
-              backgroundColor: "#313244", color: "#89b4fa",
-            }}>
-              {record.lang}
-            </span>
-            <span style={{ fontSize: 11, color: "#45475a" }}>{formatDate(record.timestamp)} {formatTime(record.timestamp)}</span>
-            {/* Copy code button */}
-            <button
-              onClick={handleCopyCode}
-              title="Copy code"
-              style={{
-                marginLeft: "auto",
-                display: "flex", alignItems: "center", gap: 4,
-                background: "none", border: "1px solid #313244",
-                borderRadius: 5, padding: "3px 8px",
-                cursor: "pointer",
-                color: copied ? "#a6e3a1" : "#6c7086",
-                fontSize: 11, transition: "color 0.15s, border-color 0.15s",
-                borderColor: copied ? "rgba(166,227,161,0.4)" : "#313244",
-              }}
-            >
-              {copied ? <Check size={11} /> : <Copy size={11} />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-          <pre style={{
-            margin: 0, padding: "14px 16px", borderRadius: 8,
-            backgroundColor: "#11111b", border: "1px solid #313244",
-            color: "#cdd6f4", fontSize: 12, lineHeight: 1.65,
-            overflowX: "auto", overflowY: "auto",
-            flex: 1, minHeight: 0,
-            whiteSpace: "pre", ...monoStyle,
-          }}>
-            {record.code}
-          </pre>
-        </div>
       </div>
     </div>
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────────
+/* ─── List item ──────────────────────────────────────────────────────────────── */
 
-export function SubmissionsTab({ questionId, refreshKey }: SubmissionsTabProps) {
-  const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
-  const [selected, setSelected] = useState<SubmissionRecord | null>(null);
+function SubmissionListItem({
+  sub,
+  isSelected,
+  onClick,
+}: {
+  sub: StoredSubmissionRef;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const accepted = sub.statusId === 10;
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 14px",
+        border: "none",
+        backgroundColor: isSelected ? "rgba(137,180,250,0.07)" : "transparent",
+        cursor: "pointer",
+        textAlign: "left",
+        borderBottom: "1px solid #1e1e2e",
+        transition: "background-color 0.1s",
+      }}
+      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.03)"; }}
+      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+    >
+      <StatusDot statusId={sub.statusId} />
+      <span style={{ fontSize: 13, fontWeight: 500, color: accepted ? "#a6e3a1" : "#f38ba8", flex: 1 }}>
+        {sub.status}
+      </span>
+      <span style={{ fontSize: 11, color: "#45475a", padding: "1px 6px", borderRadius: 4, backgroundColor: "#1e1e2e" }}>
+        {sub.lang}
+      </span>
+      <span style={{ fontSize: 11, color: "#45475a", whiteSpace: "nowrap" }}>
+        {formatDate(sub.timestamp)}
+      </span>
+    </button>
+  );
+}
 
-  // Load from localStorage whenever questionId changes or a new submission arrives
+/* ─── Main export ────────────────────────────────────────────────────────────── */
+
+interface SubmissionsTabProps {
+  questionId: string;
+  titleSlug: string;
+  refreshKey: number;
+}
+
+export function SubmissionsTab({ questionId, titleSlug, refreshKey }: SubmissionsTabProps) {
+  const [submissions, setSubmissions] = useState<StoredSubmissionRef[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<SubmissionDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load submission refs from localStorage
   useEffect(() => {
-    setSubmissions(getSubmissions(questionId));
-    setSelected(null); // reset detail view when question changes
+    setSubmissions(getSubmissionRefs(questionId));
+    setSelectedId(null);
+    setDetail(null);
+    setError(null);
   }, [questionId, refreshKey]);
 
-  function handleClear() {
-    if (!confirm("Clear all submission history for this problem?")) return;
-    clearSubmissions(questionId);
-    setSubmissions([]);
-    setSelected(null);
-  }
+  const fetchDetail = useCallback(async (submissionId: number) => {
+    setSelectedId(submissionId);
+    setDetail(null);
+    setError(null);
+    setLoading(true);
 
-  // ── Detail view ──────────────────────────────────────────────────────────────
-  if (selected) {
-    return <SubmissionDetail record={selected} onBack={() => setSelected(null)} />;
-  }
+    try {
+      const session = localStorage.getItem("lv_lc_session") ?? "";
+      const csrf = localStorage.getItem("lv_lc_csrf") ?? "";
 
-  // ── Empty state ──────────────────────────────────────────────────────────────
-  if (submissions.length === 0) {
+      const res = await fetch("/api/leetcode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "submission_details",
+          submissionId,
+          titleSlug,
+          questionId,
+          lang: "",
+          typedCode: "",
+          leetcodeSession: session,
+          csrfToken: csrf,
+        }),
+      });
+
+      const data = await res.json() as SubmissionDetail & { error?: string; message?: string };
+
+      if (!res.ok) {
+        setError(data.message ?? `Error: HTTP ${res.status}`);
+        return;
+      }
+
+      setDetail(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setLoading(false);
+    }
+  }, [titleSlug, questionId]);
+
+  // Show detail when a submission is selected
+  const selectedSub = submissions.find((s) => s.submissionId === selectedId) ?? null;
+
+  if (selectedSub) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "80px 24px",
-          textAlign: "center",
-          gap: 12,
-        }}
-      >
-        <MessageSquare size={32} style={{ color: "#45475a" }} />
-        <p style={{ color: "#6c7086", fontSize: 14, margin: 0 }}>
-          Your past submissions will appear here.
-        </p>
-      </div>
+      <SubmissionDetail
+        ref={selectedSub}
+        detail={detail}
+        loading={loading}
+        error={error}
+        onBack={() => { setSelectedId(null); setDetail(null); setError(null); }}
+      />
     );
   }
 
-  // ── List view ────────────────────────────────────────────────────────────────
+  // List view
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Table header */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "2fr 1fr 1fr 1fr",
-          gap: 8,
-          padding: "8px 16px",
-          borderBottom: "1px solid #313244",
-          fontSize: 11,
-          fontWeight: 600,
-          color: "#45475a",
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-        }}
-      >
-        <span>Status</span>
-        <span>Language</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <Clock size={10} /> Runtime
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid #313244", flexShrink: 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#cdd6f4" }}>
+          Submissions
         </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <Cpu size={10} /> Memory
-        </span>
+        {submissions.length > 0 && (
+          <span style={{ fontSize: 11, color: "#6c7086", marginLeft: 8 }}>
+            ({submissions.length})
+          </span>
+        )}
       </div>
 
-      {/* Rows */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {submissions.map((rec, i) => (
-          <button
-            key={rec.id}
-            onClick={() => setSelected(rec)}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "2fr 1fr 1fr 1fr",
-              gap: 8,
-              width: "100%",
-              padding: "10px 16px",
-              borderBottom: "1px solid #1e1e2e",
-              background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)",
-              border: "none",
-              cursor: "pointer",
-              textAlign: "left",
-              alignItems: "center",
-              transition: "background 0.1s",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(137,180,250,0.06)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)"; }}
-          >
-            {/* Status */}
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: statusColor(rec) }}>
-                {rec.status}
-              </div>
-              <div style={{ fontSize: 11, color: "#45475a", marginTop: 2 }}>
-                {formatDate(rec.timestamp)}
-              </div>
-            </div>
-
-            {/* Language */}
-            <span style={{
-              fontSize: 11, padding: "2px 8px", borderRadius: 4,
-              backgroundColor: "#313244", color: "#89b4fa",
-              display: "inline-block", fontWeight: 500,
-            }}>
-              {rec.lang}
+        {submissions.length === 0 ? (
+          <div style={{ padding: "40px 20px", textAlign: "center", color: "#45475a", fontSize: 13 }}>
+            No submissions yet for this problem.
+            <br />
+            <span style={{ fontSize: 11, marginTop: 6, display: "block" }}>
+              Submit using the LC Judge provider to see history here.
             </span>
-
-            {/* Runtime */}
-            <span style={{ fontSize: 13, color: "#a6adc8", ...monoStyle }}>
-              {rec.runtime ?? "—"}
-            </span>
-
-            {/* Memory */}
-            <span style={{ fontSize: 13, color: "#a6adc8", ...monoStyle }}>
-              {rec.memory ?? "—"}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* Footer actions */}
-      <div style={{ padding: "8px 16px", borderTop: "1px solid #313244", display: "flex", justifyContent: "flex-end" }}>
-        <button
-          onClick={handleClear}
-          style={{
-            display: "flex", alignItems: "center", gap: 5,
-            background: "none", border: "1px solid #45475a",
-            borderRadius: 6, padding: "4px 10px", cursor: "pointer",
-            color: "#6c7086", fontSize: 11, transition: "color 0.15s, border-color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "#f38ba8";
-            (e.currentTarget as HTMLButtonElement).style.borderColor = "#f38ba8";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.color = "#6c7086";
-            (e.currentTarget as HTMLButtonElement).style.borderColor = "#45475a";
-          }}
-        >
-          <Trash2 size={11} />
-          Clear history
-        </button>
+          </div>
+        ) : (
+          submissions.map((sub) => (
+            <SubmissionListItem
+              key={sub.submissionId}
+              sub={sub}
+              isSelected={sub.submissionId === selectedId}
+              onClick={() => fetchDetail(sub.submissionId)}
+            />
+          ))
+        )}
       </div>
     </div>
   );

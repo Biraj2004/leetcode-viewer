@@ -280,8 +280,6 @@ export function EditorPanel({
             expectedOutput:    (payload.expected_output as string | undefined),
             codeOutput:        (payload.code_output as string | undefined),
             submissionId:      (payload.submission_id as number | undefined),
-            runtimeDistribution: (payload.runtime_distribution as Array<[number, number]> | undefined),
-            memoryDistribution:  (payload.memory_distribution as Array<[number, number]> | undefined),
           };
         }
 

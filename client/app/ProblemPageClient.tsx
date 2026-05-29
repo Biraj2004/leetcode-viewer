@@ -16,7 +16,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { TopBar }        from "../components/layout/TopBar";
 import { ProblemPanel }  from "../components/problem/ProblemPanel";
 import { EditorPanel }   from "../components/editor/EditorPanel";
-import { saveSubmission } from "../lib/submissionsStore";
+import { saveSubmissionRef } from "../lib/submissionsStore";
 import type { ParsedProblem } from "../types/ui";
 import type { EditorHandle, ExecuteResult } from "../types/execution";
 
@@ -91,11 +91,17 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
       const res = await editorRef.current.execute({ mode: "submit" });
       setResult(res);
 
-      // Persist to localStorage if LC provider
-      if (res.provider === "leetcode") {
-        const lang    = (editorRef.current as unknown as { _lang?: string })._lang ?? "unknown";
-        const code    = (editorRef.current as unknown as { _code?: string })._code ?? "";
-        saveSubmission(problem.questionId, lang, code, res);
+      // Persist to localStorage if LC provider (only store the ID + minimal metadata)
+      if (res.provider === "leetcode" && res.submissionId) {
+        const lang = (editorRef.current as unknown as { _lang?: string })._lang ?? "unknown";
+        saveSubmissionRef({
+          submissionId: res.submissionId,
+          questionId:   problem.questionId,
+          timestamp:    Date.now(),
+          status:       res.status.description,
+          statusId:     res.status.id,
+          lang,
+        });
         setSubmissionsRefreshKey((k) => k + 1);
         // Switch to Submissions tab automatically
         setForcedProblemTab("submissions");

@@ -76,101 +76,6 @@ function CodeBox({
   );
 }
 
-// ── Distribution Bar Chart ─────────────────────────────────────────────────────
-// runtimeDistribution from GraphQL is an array of [runtime_ms, percentage]
-
-function DistributionChart({
-  data,
-  myValue,
-  label,
-  unit,
-  color,
-}: {
-  data: Array<[number, number]>;
-  myValue?: number;
-  label: string;
-  unit: string;
-  color: string;
-}) {
-  if (!data || data.length === 0) return null;
-
-  const maxPct = Math.max(...data.map(([, pct]) => pct));
-  const chartHeight = 80;
-
-  // Find closest bar to myValue
-  const myIdx = myValue != null
-    ? data.reduce((best, [val], i) => {
-        const curr = data[i][0];
-        const bestVal = data[best][0];
-        return Math.abs(curr - myValue) < Math.abs(bestVal - myValue) ? i : best;
-      }, 0)
-    : -1;
-
-  // Only show every Nth label to avoid overcrowding
-  const showEveryN = Math.max(1, Math.floor(data.length / 8));
-
-  return (
-    <div style={{ marginTop: 8 }}>
-      <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-        {label} Distribution
-      </p>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: chartHeight, overflowX: "auto" }}>
-        {data.map(([val, pct], i) => {
-          const barH = maxPct > 0 ? (pct / maxPct) * chartHeight : 0;
-          const isMe = i === myIdx;
-          return (
-            <div
-              key={val}
-              title={`${val}${unit}: ${pct.toFixed(2)}%`}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                minWidth: 4,
-                flex: "0 0 auto",
-              }}
-            >
-              <div
-                style={{
-                  width: 4,
-                  height: barH,
-                  backgroundColor: isMe ? "#f9e2af" : color,
-                  borderRadius: "2px 2px 0 0",
-                  opacity: isMe ? 1 : 0.75,
-                  transition: "height 0.4s ease",
-                }}
-              />
-            </div>
-          );
-        })}
-      </div>
-      {/* X-axis labels */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 1, overflowX: "hidden" }}>
-        {data.map(([val], i) => (
-          i % showEveryN === 0 ? (
-            <div
-              key={val}
-              style={{
-                minWidth: 4,
-                flex: "0 0 auto",
-                fontSize: 9,
-                color: "#45475a",
-                marginTop: 2,
-                whiteSpace: "nowrap",
-                overflow: "visible",
-              }}
-            >
-              {val}{unit}
-            </div>
-          ) : (
-            <div key={val} style={{ minWidth: 4, flex: "0 0 auto" }} />
-          )
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Tab-style case selector ────────────────────────────────────────────────────
 
 function CaseTabs({
@@ -298,95 +203,69 @@ function LCRunResult({ result }: { result: ExecuteResult }) {
   );
 }
 
-
 // ── LC submit result ───────────────────────────────────────────────────────────
 
 function LCSubmitResult({ result }: { result: ExecuteResult }) {
   const isAccepted = result.status.id === 10;
   const isCompileError = result.status.id === 20;
 
-  // Parse runtime from statusRuntime like "41 ms" → 41
-  const myRuntimeMs = result.statusRuntime
-    ? parseInt(result.statusRuntime.replace(/[^0-9]/g, ""), 10)
-    : undefined;
-  // Parse memory from statusMemory like "57.34 MB" → 57340 (KB)
-  const myMemoryMB = result.statusMemory
-    ? parseFloat(result.statusMemory.replace(/[^0-9.]/g, ""))
-    : undefined;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <StatusBadge result={result} />
 
-      {/* Accepted: runtime + memory stats + chart */}
+      {/* Accepted: runtime + memory stats */}
       {isAccepted && (
         <div
           style={{
-            padding: "14px 16px",
+            padding: "12px 14px",
             borderRadius: 8,
             border: "1px solid #313244",
             backgroundColor: "#181825",
             display: "flex",
-            flexDirection: "column",
-            gap: 12,
+            gap: 24,
+            flexWrap: "wrap",
           }}
         >
-          {/* Stats row */}
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-            {result.statusRuntime && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Zap size={14} style={{ color: "#89b4fa" }} />
-                <div>
-                  <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
-                  <p style={{ fontSize: 15, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
-                    {result.statusRuntime}
-                    {result.runtimePercentile != null && (
-                      <span style={{ fontSize: 12, fontWeight: 400, color: "#89b4fa", marginLeft: 8 }}>
-                        Beats {result.runtimePercentile.toFixed(2)}%
-                      </span>
-                    )}
-                  </p>
-                </div>
+          {result.statusRuntime && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Zap size={13} style={{ color: "#89b4fa" }} />
+              <div>
+                <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                  {result.statusRuntime}
+                  {result.runtimePercentile != null && (
+                    <span style={{ fontSize: 11, fontWeight: 400, color: "#89b4fa", marginLeft: 7 }}>
+                      Beats {result.runtimePercentile.toFixed(2)}%
+                    </span>
+                  )}
+                </p>
               </div>
-            )}
-            {result.statusMemory && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <MemoryStick size={14} style={{ color: "#a6e3a1" }} />
-                <div>
-                  <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
-                  <p style={{ fontSize: 15, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
-                    {result.statusMemory}
-                    {result.memoryPercentile != null && (
-                      <span style={{ fontSize: 12, fontWeight: 400, color: "#a6e3a1", marginLeft: 8 }}>
-                        Beats {result.memoryPercentile.toFixed(2)}%
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Distribution charts */}
-          {result.runtimeDistribution && result.runtimeDistribution.length > 0 && (
-            <DistributionChart
-              data={result.runtimeDistribution}
-              myValue={myRuntimeMs}
-              label="Runtime"
-              unit="ms"
-              color="#89b4fa"
-            />
+            </div>
           )}
-          {result.memoryDistribution && result.memoryDistribution.length > 0 && (
-            <DistributionChart
-              data={result.memoryDistribution}
-              myValue={myMemoryMB != null ? myMemoryMB * 1024 : undefined}
-              label="Memory"
-              unit="KB"
-              color="#a6e3a1"
-            />
+          {result.statusMemory && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <MemoryStick size={13} style={{ color: "#a6e3a1" }} />
+              <div>
+                <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
+                <p style={{ fontSize: 14, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                  {result.statusMemory}
+                  {result.memoryPercentile != null && (
+                    <span style={{ fontSize: 11, fontWeight: 400, color: "#a6e3a1", marginLeft: 7 }}>
+                      Beats {result.memoryPercentile.toFixed(2)}%
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
           )}
         </div>
+      )}
+
+      {/* "View in Submissions" hint */}
+      {isAccepted && (
+        <p style={{ fontSize: 11, color: "#45475a", margin: 0 }}>
+          ✓ Saved — open the Submissions tab to view the distribution chart and full details.
+        </p>
       )}
 
       {/* Compile error */}

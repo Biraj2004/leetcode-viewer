@@ -60,6 +60,7 @@ export function ProblemPanel({
         return (
           <SubmissionsTab
             questionId={problem.questionId}
+            titleSlug={problem.titleSlug}
             refreshKey={submissionsRefreshKey}
           />
         );

@@ -143,7 +143,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       leetcodeSession,
       csrfToken,
     } = body as {
-      mode: "run" | "submit";
+      mode: "run" | "submit" | "submission_details";
       titleSlug: string;
       questionId: string;
       lang: string;
@@ -160,7 +160,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         { status: 401 },
       );
     }
-    if (!titleSlug || !questionId || !lang || !typedCode) {
+    // For run/submit we also need lang, typedCode, titleSlug, questionId
+    if (mode !== "submission_details" && (!titleSlug || !questionId || !lang || !typedCode)) {
       return Response.json(
         { error: "MISSING_FIELDS", message: "Missing required fields." },
         { status: 400 },
@@ -347,76 +348,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       const statusCode = data.status_code ?? 11;
       const statusMsg = LC_STATUS[statusCode] ?? data.status_msg ?? "Unknown";
 
-      // ── Enrich with GraphQL submissionDetails (gets distribution data) ──
-      let runtimeDistribution: Array<[number, number]> | undefined;
-      let memoryDistribution: Array<[number, number]> | undefined;
-
-      try {
-        const gqlQuery = `query submissionDetails($submissionId: Int!) {
-          submissionDetails(submissionId: $submissionId) {
-            runtimeDistribution
-            memoryDistribution
-          }
-        }`;
-
-        const gqlHeaders = {
-          ...headers,
-          "Content-Type": "application/json",
-        };
-
-        const gqlRes = await fetch(`${LC_BASE}/graphql/`, {
-          method: "POST",
-          headers: gqlHeaders,
-          body: JSON.stringify({
-            query: gqlQuery,
-            variables: { submissionId: submitJson.submission_id },
-            operationName: "submissionDetails",
-          }),
-        });
-
-        if (gqlRes.ok) {
-          const gqlData = await gqlRes.json() as {
-            data?: {
-              submissionDetails?: {
-                runtimeDistribution?: string;
-                memoryDistribution?: string;
-              };
-            };
-            errors?: unknown[];
-          };
-
-          console.log("[LC API] GraphQL raw response:", JSON.stringify(gqlData).slice(0, 500));
-
-          const sd = gqlData?.data?.submissionDetails;
-          if (sd?.runtimeDistribution) {
-            try {
-              // LC returns this as a JSON string of {distribution: [[ms, pct], ...]}
-              const parsed = JSON.parse(sd.runtimeDistribution);
-              runtimeDistribution = Array.isArray(parsed)
-                ? parsed
-                : (parsed?.distribution ?? []);
-            } catch { /* skip */ }
-          }
-          if (sd?.memoryDistribution) {
-            try {
-              const parsed = JSON.parse(sd.memoryDistribution);
-              memoryDistribution = Array.isArray(parsed)
-                ? parsed
-                : (parsed?.distribution ?? []);
-            } catch { /* skip */ }
-          }
-          console.log(`[LC API] GraphQL submissionDetails → runtime points: ${runtimeDistribution?.length ?? 0}, memory points: ${memoryDistribution?.length ?? 0}`);
-          if (gqlData?.errors) {
-            console.warn("[LC API] GraphQL errors:", gqlData.errors);
-          }
-        } else {
-          const text = await gqlRes.text();
-          console.warn(`[LC API] GraphQL HTTP ${gqlRes.status}:`, text.slice(0, 300));
-        }
-      } catch (gqlErr) {
-        console.warn("[LC API] GraphQL submissionDetails failed (non-critical):", gqlErr);
-      }
-
       return Response.json({
         provider: "leetcode",
         mode: "submit",
@@ -436,12 +367,108 @@ export async function POST(request: NextRequest): Promise<Response> {
         compile_error: data.compile_error,
         full_compile_error: data.full_compile_error,
         runtime_error: data.runtime_error,
+      });
+    }
+
+    // ── Submission details via GraphQL (for SubmissionsTab on-demand loading) ──
+    if (mode === "submission_details") {
+      const { submissionId } = body as { submissionId: number; leetcodeSession: string; csrfToken: string };
+      if (!submissionId) {
+        return Response.json({ error: "MISSING_FIELDS", message: "submissionId required." }, { status: 400 });
+      }
+
+      const gqlQuery = `query submissionDetails($submissionId: Int!) {
+        submissionDetails(submissionId: $submissionId) {
+          runtime
+          runtimeDisplay
+          runtimePercentile
+          runtimeDistribution
+          memory
+          memoryDisplay
+          memoryPercentile
+          memoryDistribution
+          code
+          timestamp
+          statusCode
+          lang { name verboseName }
+          question { questionId titleSlug }
+          notes
+          runtimeError
+          compileError
+          lastTestcase
+          codeOutput
+          expectedOutput
+          totalCorrect
+          totalTestcases
+          stdOutput
+        }
+      }`;
+
+      const gqlHeaders = {
+        "Content-Type": "application/json",
+        Cookie: `LEETCODE_SESSION=${leetcodeSession}; csrftoken=${csrfToken}`,
+        "X-CSRFToken": csrfToken,
+        Referer: `${LC_BASE}/`,
+        Origin: LC_BASE,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+      };
+
+      console.log(`[LC API] GraphQL submissionDetails for id=${submissionId}`);
+
+      const gqlRes = await fetch(`${LC_BASE}/graphql/`, {
+        method: "POST",
+        headers: gqlHeaders,
+        body: JSON.stringify({
+          query: gqlQuery,
+          variables: { submissionId },
+          operationName: "submissionDetails",
+        }),
+      });
+
+      if (gqlRes.status === 401 || gqlRes.status === 403) {
+        return Response.json({ error: "SESSION_EXPIRED", message: "LeetCode session expired." }, { status: 401 });
+      }
+      if (!gqlRes.ok) {
+        return Response.json({ error: "GQL_FAILED", message: `GraphQL HTTP ${gqlRes.status}` }, { status: 502 });
+      }
+
+      const gqlData = await gqlRes.json() as {
+        data?: { submissionDetails?: Record<string, unknown> };
+        errors?: unknown[];
+      };
+
+      if (gqlData?.errors?.length) {
+        console.warn("[LC API] GraphQL errors:", gqlData.errors);
+      }
+
+      const sd = gqlData?.data?.submissionDetails;
+      if (!sd) {
+        return Response.json({ error: "NOT_FOUND", message: "Submission not found." }, { status: 404 });
+      }
+
+      // Parse distribution JSON strings
+      let runtimeDistribution: Array<[number, number]> | undefined;
+      let memoryDistribution: Array<[number, number]> | undefined;
+      try {
+        const p = JSON.parse(sd.runtimeDistribution as string);
+        runtimeDistribution = Array.isArray(p) ? p : (p?.distribution ?? []);
+      } catch { /* skip */ }
+      try {
+        const p = JSON.parse(sd.memoryDistribution as string);
+        memoryDistribution = Array.isArray(p) ? p : (p?.distribution ?? []);
+      } catch { /* skip */ }
+
+      console.log(`[LC API] submissionDetails → runtime points: ${runtimeDistribution?.length ?? 0}`);
+
+      return Response.json({
+        ...sd,
         runtime_distribution: runtimeDistribution,
         memory_distribution: memoryDistribution,
       });
     }
 
-    return Response.json({ error: "INVALID_MODE", message: "mode must be 'run' or 'submit'." }, { status: 400 });
+    return Response.json({ error: "INVALID_MODE", message: "mode must be 'run', 'submit', or 'submission_details'." }, { status: 400 });
   } catch (error) {
     return Response.json(
       {
