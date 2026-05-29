@@ -1,25 +1,26 @@
 "use client";
 
 /**
- * SolutionTab.tsx
+ * SolutionTab.tsx (Editorial)
  *
  * Renders the editorial markdown with:
  * - KaTeX math  $$...$$ (display) and $...$ (inline)
- * - Playground blocks → tabbed code viewer from JSON data
- * - Image blocks → <img> tags
- * - Slides blocks → removed (no data)
+ * - Playground blocks → tabbed code viewer with clipboard copy button
+ * - Image blocks → <img> with white background for SVG compatibility
+ * - Slides blocks → carousel with white background frames
  * - Video containers → removed
  * - Raw <br/> tags → proper whitespace
  * - GFM tables, blockquotes, lists, strikethrough
+ * - {:width="..."} attributes → stripped
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { BookOpen, ChevronLeft, ChevronRight, Play, Pause } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Play, Pause, Copy, Check } from "lucide-react";
 import type { SolutionBlock, PlaygroundCode, SlideFrame } from "../../types/ui";
 
 // KaTeX CSS — must be imported for math to render correctly
@@ -50,7 +51,6 @@ function preprocessMarkdown(raw: string, blocks: SolutionBlock[]): string {
   md = md.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/g, "");
 
   // 4. Replace playground placeholders with a custom HTML span carrying the block id
-  //    rehype-raw passes this through; our custom span renderer swaps it for PlaygroundBlock
   md = md.replace(/\[LC_BLOCK:PLAYGROUND:([^\]]+)\]/g, (_, id: string) => {
     const trimId = id.trim();
     const block = blockMap.get(trimId);
@@ -65,7 +65,7 @@ function preprocessMarkdown(raw: string, blocks: SolutionBlock[]): string {
     return `![${block.alt ?? ""}](${block.url})`;
   });
 
-  // 6. Replace slides placeholders with a custom HTML span (same pattern as playground)
+  // 6. Replace slides placeholders with a custom HTML span
   md = md.replace(/\[LC_BLOCK:SLIDES:([^\]]+)\]/g, (_, id: string) => {
     const trimId = id.trim();
     const block = blockMap.get(trimId);
@@ -77,7 +77,10 @@ function preprocessMarkdown(raw: string, blocks: SolutionBlock[]): string {
   md = md.replace(/^\[TOC\]\s*/m, "");
 
   // 8. Fix literal <br/> lines that appear as raw text in paragraphs
-  md = md.replace(/^<br\s*\/?>\s*$/gm, "\n");
+  md = md.replace(/^<br\s*\/?>s*$/gm, "\n");
+
+  // 9. Strip Markdown-it attribute annotations like {:width="539px"} {:class="..."}
+  md = md.replace(/\{:[^}]+\}/g, "");
 
   return md;
 }
@@ -109,7 +112,9 @@ function PlaygroundBlock({ codes }: { codes: PlaygroundCode[] }) {
   }), [codes]);
 
   const [activeIdx, setActiveIdx] = useState(0);
+  const [copied, setCopied] = useState(false);
   const active = sorted[activeIdx];
+
   const lineCount = useMemo(
     () => (active?.code ? active.code.split(/\r?\n/).length : 0),
     [active?.code],
@@ -121,26 +126,61 @@ function PlaygroundBlock({ codes }: { codes: PlaygroundCode[] }) {
   const boxHeight = Math.min(MAX_CODE_BOX_HEIGHT, neededHeight);
   const shouldScrollY = neededHeight > MAX_CODE_BOX_HEIGHT;
 
+  const handleCopy = useCallback(async () => {
+    if (!active?.code) return;
+    try {
+      await navigator.clipboard.writeText(active.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard not available — ignore
+    }
+  }, [active?.code]);
+
   return (
     <div style={{ border: "1px solid #313244", borderRadius: 8, overflow: "hidden", margin: "0 0 20px" }}>
-      {/* Language tabs */}
-      <div style={{ display: "flex", overflowX: "auto", backgroundColor: "#181825", borderBottom: "1px solid #313244" }}>
-        {sorted.map((c, i) => (
-          <button
-            key={c.langSlug}
-            onClick={() => setActiveIdx(i)}
-            style={{
-              padding: "7px 14px", fontSize: 12,
-              fontWeight: i === activeIdx ? 600 : 400,
-              color: i === activeIdx ? "#89b4fa" : "#6c7086",
-              background: "none", border: "none",
-              borderBottom: i === activeIdx ? "2px solid #89b4fa" : "2px solid transparent",
-              cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-            }}
-          >
-            {LANG_LABELS[c.langSlug] ?? c.langSlug}
-          </button>
-        ))}
+      {/* Language tabs + copy button */}
+      <div style={{ display: "flex", alignItems: "center", backgroundColor: "#181825", borderBottom: "1px solid #313244" }}>
+        <div style={{ display: "flex", overflowX: "auto", flex: 1 }}>
+          {sorted.map((c, i) => (
+            <button
+              key={c.langSlug}
+              onClick={() => setActiveIdx(i)}
+              style={{
+                padding: "7px 14px", fontSize: 12,
+                fontWeight: i === activeIdx ? 600 : 400,
+                color: i === activeIdx ? "#89b4fa" : "#6c7086",
+                background: "none", border: "none",
+                borderBottom: i === activeIdx ? "2px solid #89b4fa" : "2px solid transparent",
+                cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+              }}
+            >
+              {LANG_LABELS[c.langSlug] ?? c.langSlug}
+            </button>
+          ))}
+        </div>
+        {/* Clipboard copy button */}
+        <button
+          onClick={handleCopy}
+          title="Copy code to clipboard"
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: copied ? "#a6e3a1" : "#6c7086",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "6px 12px",
+            fontSize: 11,
+            fontWeight: 500,
+            flexShrink: 0,
+            transition: "color 0.2s",
+          }}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
       </div>
       {/* Code */}
       <pre style={{
@@ -194,13 +234,13 @@ function SlidesBlock({ frames }: { frames: SlideFrame[] }) {
         backgroundColor: "#181825",
       }}
     >
-      {/* Image */}
-      <div style={{ position: "relative", backgroundColor: "#11111b", minHeight: 200 }}>
+      {/* Image — white background so SVG diagrams are visible */}
+      <div className="lc-slides-frame" style={{ position: "relative" }}>
         {frame && (
           <img
             src={frame.image}
             alt={`Slide ${current + 1}`}
-            style={{ width: "100%", display: "block", maxHeight: 400, objectFit: "contain" }}
+            style={{ width: "100%", display: "block", maxHeight: 420, objectFit: "contain" }}
           />
         )}
       </div>
@@ -362,8 +402,9 @@ export function SolutionTab({ markdown, blocks }: SolutionTabProps) {
             return <code style={{ backgroundColor: "#313244", color: "#cdd6f4", padding: "2px 6px", borderRadius: 4, fontSize: 12, fontFamily: "'Fira Code', Consolas, monospace" }}>{children}</code>;
           },
 
+          // White background for images/SVGs in dark mode
           img: ({ src, alt }) => src ? (
-            <img src={src} alt={alt ?? ""} style={{ maxWidth: "100%", borderRadius: 6, margin: "8px 0 16px", display: "block" }} />
+            <img src={src} alt={alt ?? ""} className="lc-editorial-img" />
           ) : null,
 
           strong: ({ children }) => <strong style={{ color: "#cdd6f4", fontWeight: 600 }}>{children}</strong>,

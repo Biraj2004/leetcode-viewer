@@ -51,6 +51,30 @@ async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Log every outgoing request to LeetCode (server-side console).
+ * Cookie value is truncated to avoid leaking the full session in logs.
+ */
+function logLCRequest(
+  method: string,
+  url: string,
+  headers: Record<string, string>,
+  payload?: unknown,
+): void {
+  const safeHeaders = {
+    ...headers,
+    Cookie: headers.Cookie
+      ? headers.Cookie.slice(0, 40) + "...[truncated]"
+      : undefined,
+  };
+  console.log(
+    `\n[LC API] ${method} ${url}`,
+    "\nHeaders:",
+    JSON.stringify(safeHeaders, null, 2),
+    payload ? `\nPayload: ${JSON.stringify(payload)}` : "",
+  );
+}
+
 interface LCCheckResult {
   state: string;          // "PENDING" | "STARTED" | "SUCCESS" | "FAILURE"
   status_code?: number;
@@ -154,10 +178,13 @@ export async function POST(request: NextRequest): Promise<Response> {
         data_input: dataInput ?? "",
       };
 
+      const runUrl = `${LC_BASE}/problems/${titleSlug}/interpret_solution/`;
+      //logLCRequest("POST", runUrl, headers, runPayload);
       const runRes = await fetch(
-        `${LC_BASE}/problems/${titleSlug}/interpret_solution/`,
+        runUrl,
         { method: "POST", headers, body: JSON.stringify(runPayload) },
       );
+      //console.log(`[LC API] → interpret_solution response: HTTP ${runRes.status}`);
 
       if (runRes.status === 401 || runRes.status === 403) {
         return Response.json(
@@ -189,6 +216,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
       // Poll for result
       const checkUrl = `${LC_BASE}/submissions/detail/${runJson.interpret_id}/check/`;
+      console.log(`[LC API] Polling GET ${checkUrl}`);
       const { ok, data, error } = await pollCheck(checkUrl, headers);
 
       if (!ok || !data) {
@@ -219,7 +247,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       // Build run result — compare_result is "111" if all visible cases pass
       const allPass = data.correct_answer === true;
       const statusCode = allPass ? 10 : (data.status_code ?? 11);
-      const statusMsg  = LC_STATUS[statusCode] ?? data.status_msg ?? "Unknown";
+      const statusMsg = LC_STATUS[statusCode] ?? data.status_msg ?? "Unknown";
 
       return Response.json({
         provider: "leetcode",
@@ -250,10 +278,13 @@ export async function POST(request: NextRequest): Promise<Response> {
         typed_code: typedCode,
       };
 
+      const submitUrl = `${LC_BASE}/problems/${titleSlug}/submit/`;
+      //logLCRequest("POST", submitUrl, headers, submitPayload);
       const submitRes = await fetch(
-        `${LC_BASE}/problems/${titleSlug}/submit/`,
+        submitUrl,
         { method: "POST", headers, body: JSON.stringify(submitPayload) },
       );
+      //console.log(`[LC API] → submit response: HTTP ${submitRes.status}`);
 
       if (submitRes.status === 401 || submitRes.status === 403) {
         return Response.json(
@@ -285,6 +316,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
       // Poll for result
       const checkUrl = `${LC_BASE}/submissions/detail/${submitJson.submission_id}/check/`;
+      console.log(`[LC API] Polling GET ${checkUrl}`);
       const { ok, data, error } = await pollCheck(checkUrl, headers);
 
       if (!ok || !data) {
@@ -313,7 +345,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
 
       const statusCode = data.status_code ?? 11;
-      const statusMsg  = LC_STATUS[statusCode] ?? data.status_msg ?? "Unknown";
+      const statusMsg = LC_STATUS[statusCode] ?? data.status_msg ?? "Unknown";
 
       return Response.json({
         provider: "leetcode",

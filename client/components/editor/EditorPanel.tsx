@@ -115,7 +115,10 @@ export function EditorPanel({
   useEffect(() => {
     if (!editorRef) return;
 
-    editorRef.current = {
+    // Also expose _lang and _code so the parent can read them when saving submissions
+    (editorRef as unknown as { current: { _lang?: string; _code?: string; execute: unknown } }).current = {
+      _lang: language,
+      _code: code,
       execute: async ({ mode = "run" } = {}): Promise<ExecuteResult> => {
         const provider = getProvider();
 
@@ -329,7 +332,7 @@ export function EditorPanel({
 
         return {
           provider: "judge0",
-          mode,
+          mode: mode as "run" | "submit",
           status: allPassed
             ? { id: 3, description: "Accepted" }
             : { id: 4, description: "Wrong Answer" },

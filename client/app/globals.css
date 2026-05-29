@@ -70,3 +70,29 @@ textarea {
   display: block;
   min-height: 20px; /* matches EDITOR_LINE_HEIGHT */
 }
+
+/* ── KaTeX dark-mode fix ──────────────────────────────────────────────────── */
+/* KaTeX ships with black text by default; force light colour for dark theme  */
+.katex,
+.katex * {
+  color: #cdd6f4 !important;
+}
+
+/* ── Editorial images / SVGs — white bg so SVGs are always visible ────────── */
+.lc-editorial-img {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 6px;
+  display: block;
+  max-width: 100%;
+  margin: 8px 0 16px;
+}
+
+/* Slides frame wrapper — white background for SVG slides */
+.lc-slides-frame {
+  background: #ffffff;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

@@ -5,6 +5,10 @@
  *
  * Interactive shell — owns navigation state (current problem index),
  * run/submit state, and wires TopBar ↔ EditorPanel via a ref.
+ *
+ * After a successful submit (LeetCode provider):
+ *   - Saves the result to localStorage via submissionsStore
+ *   - Navigates the ProblemPanel to the Submissions tab
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -12,6 +16,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { TopBar }        from "../components/layout/TopBar";
 import { ProblemPanel }  from "../components/problem/ProblemPanel";
 import { EditorPanel }   from "../components/editor/EditorPanel";
+import { saveSubmission } from "../lib/submissionsStore";
 import type { ParsedProblem } from "../types/ui";
 import type { EditorHandle, ExecuteResult } from "../types/execution";
 
@@ -21,10 +26,13 @@ interface ProblemPageClientProps {
 }
 
 export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientProps) {
-  const [problemIndex, setProblemIndex] = useState(initialIndex);
-  const [isRunning,    setIsRunning]    = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [result,       setResult]       = useState<ExecuteResult | null>(null);
+  const [problemIndex,       setProblemIndex]       = useState(initialIndex);
+  const [isRunning,          setIsRunning]          = useState(false);
+  const [isSubmitting,       setIsSubmitting]       = useState(false);
+  const [result,             setResult]             = useState<ExecuteResult | null>(null);
+  const [submissionsRefreshKey, setSubmissionsRefreshKey] = useState(0);
+  // Which tab the ProblemPanel should show ("description" | "editorial" | "submissions")
+  const [forcedProblemTab,   setForcedProblemTab]   = useState<string | null>(null);
 
   const editorRef = useRef<EditorHandle | null>(null);
 
@@ -35,16 +43,19 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
   const goToPrev = useCallback(() => {
     setProblemIndex((i) => Math.max(0, i - 1));
     setResult(null);
+    setForcedProblemTab(null);
   }, []);
 
   const goToNext = useCallback(() => {
     setProblemIndex((i) => Math.min(problems.length - 1, i + 1));
     setResult(null);
+    setForcedProblemTab(null);
   }, [problems.length]);
 
   const goToProblem = useCallback((index: number) => {
     setProblemIndex(Math.max(0, Math.min(problems.length - 1, index)));
     setResult(null);
+    setForcedProblemTab(null);
   }, [problems.length]);
 
   const handleRun = useCallback(async () => {
@@ -79,6 +90,16 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
     try {
       const res = await editorRef.current.execute({ mode: "submit" });
       setResult(res);
+
+      // Persist to localStorage if LC provider
+      if (res.provider === "leetcode") {
+        const lang    = (editorRef.current as unknown as { _lang?: string })._lang ?? "unknown";
+        const code    = (editorRef.current as unknown as { _code?: string })._code ?? "";
+        saveSubmission(problem.questionId, lang, code, res);
+        setSubmissionsRefreshKey((k) => k + 1);
+        // Switch to Submissions tab automatically
+        setForcedProblemTab("submissions");
+      }
     } catch (err) {
       setResult({
         mode:         "submit",
@@ -95,7 +116,7 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
     } finally {
       setIsSubmitting(false);
     }
-  }, []);
+  }, [problem.questionId]);
 
   return (
     <div
@@ -128,7 +149,13 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
           <Panel defaultSize={42} minSize={25}>
             <div style={{ height: "100%", paddingRight: 3 }}>
               {/* key forces full remount when problem changes — resets all tab state */}
-              <ProblemPanel key={problem.titleSlug} problem={problem} />
+              <ProblemPanel
+                key={problem.titleSlug}
+                problem={problem}
+                submissionsRefreshKey={submissionsRefreshKey}
+                forcedTab={forcedProblemTab}
+                onTabForceHandled={() => setForcedProblemTab(null)}
+              />
             </div>
           </Panel>
 
