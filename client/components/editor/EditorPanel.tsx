@@ -15,7 +15,7 @@
  * server-side — they are never stored server-side.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { EditorToolbar } from "./EditorToolbar";
 import { CodeEditor } from "./CodeEditor";
@@ -87,6 +87,8 @@ export function EditorPanel({
   isSubmitting,
   result,
 }: EditorPanelProps) {
+  const editorContainerRef = useRef<HTMLDivElement | null>(null);
+
   // Default to first supported language
   const defaultLang = (problem.languages[0]?.value ?? "javascript") as LanguageKey;
 
@@ -135,8 +137,9 @@ export function EditorPanel({
 
           let dataInput: string | undefined;
           if (mode === "run") {
-            // Active case — map index to either example or custom
-            dataInput = allInputs[activeTestCaseIndex] ?? allInputs[0] ?? "";
+            // Send ALL test cases at once (joined by \n).
+            // LC interprets_solution supports multiple cases in one call.
+            dataInput = allInputs.join("\n");
           }
           // Submit: dataInput is undefined — LC uses its own full test suite
 
@@ -187,34 +190,42 @@ export function EditorPanel({
           const statusDesc = (payload.status as { description?: string } | undefined)?.description ?? "Unknown";
 
           if (mode === "run") {
-            // Run mode — build caseResults from compare_result if available
-            const compareStr = (payload.compare_result as string | undefined) ?? "";
-            const codeOutput = (payload.code_output as string | undefined) ?? null;
-            const stdOutput  = (payload.std_output as string | undefined) ?? null;
-            const compileErr = (payload.full_compile_error as string | undefined)
+            const compareStr  = (payload.compare_result as string | undefined) ?? "";
+            const compileErr  = (payload.full_compile_error as string | undefined)
               ?? (payload.compile_error as string | undefined) ?? null;
-            const runtimeErr = (payload.runtime_error as string | undefined) ?? null;
-            const expectedOut = (payload.expected_output as string | undefined) ?? null;
+            const runtimeErr  = (payload.runtime_error as string | undefined) ?? null;
+            const stdOutput   = (payload.std_output as string | undefined) ?? null;
             const lastTestcase = (payload.last_testcase as string | undefined) ?? null;
 
-            // Build a per-case result array from compare_result bits
-            const runCaseResults: CaseResult[] = allInputs
-              .slice(0, mode === "run" ? 1 : allInputs.length)
-              .map((_, i) => {
-                const passed = compareStr[i] === "1";
-                return {
-                  caseId:         i + 1,
-                  passed,
-                  expectedOutput: expectedOut ?? "",
-                  actualOutput:   codeOutput ?? "",
-                  stdout:         stdOutput,
-                  stderr:         runtimeErr,
-                  compileOutput:  compileErr,
-                  status:         null,
-                  time:           null,
-                  memory:         null,
-                };
-              });
+            // LC returns code_output and expected_output as either:
+            // - a newline-delimited string (single case)
+            // - an array of strings (multiple cases)
+            const rawCodeOut = payload.code_output;
+            const rawExpOut  = payload.expected_output;
+
+            const allCodeOutputs: string[] = Array.isArray(rawCodeOut)
+              ? (rawCodeOut as string[])
+              : (typeof rawCodeOut === "string" && rawCodeOut ? rawCodeOut.split("\n") : []);
+            const allExpectedOutputs: string[] = Array.isArray(rawExpOut)
+              ? (rawExpOut as string[])
+              : (typeof rawExpOut === "string" && rawExpOut ? rawExpOut.split("\n") : []);
+
+            // Build per-case results using compare_result bits
+            const runCaseResults: CaseResult[] = allInputs.map((_, i) => {
+              const passed = compareStr[i] === "1";
+              return {
+                caseId:         i + 1,
+                passed,
+                expectedOutput: allExpectedOutputs[i] ?? "",
+                actualOutput:   allCodeOutputs[i] ?? "",
+                stdout:         stdOutput,
+                stderr:         runtimeErr,
+                compileOutput:  compileErr,
+                status:         null,
+                time:           null,
+                memory:         null,
+              };
+            });
 
             const passed = runCaseResults.filter((c) => c.passed).length;
             return {
@@ -230,8 +241,11 @@ export function EditorPanel({
               time: null,
               memory: null,
               lastTestcase:   lastTestcase ?? undefined,
-              expectedOutput: expectedOut ?? undefined,
-              codeOutput:     codeOutput ?? undefined,
+              expectedOutput: allExpectedOutputs[0] ?? undefined,
+              codeOutput:     allCodeOutputs[0] ?? undefined,
+              allCodeOutputs,
+              allExpectedOutputs,
+              allInputs,
               totalCorrect:   (payload.total_correct as number | undefined),
               totalTestcases: (payload.total_testcases as number | undefined),
             };
@@ -351,6 +365,7 @@ export function EditorPanel({
 
   return (
     <div
+      ref={editorContainerRef}
       style={{
         height: "100%",
         display: "flex",
@@ -367,10 +382,11 @@ export function EditorPanel({
         code={code}
         onLanguageChange={handleLanguageChange}
         onReset={handleReset}
+        editorContainerRef={editorContainerRef}
       />
 
       <div style={{ flex: 1, overflow: "hidden" }}>
-        <PanelGroup direction="vertical" autoSaveId="editor-vertical">
+        <PanelGroup direction="vertical">
           {/* Code editor */}
           <Panel defaultSize={62} minSize={25}>
             <CodeEditor

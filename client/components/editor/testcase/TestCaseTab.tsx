@@ -309,38 +309,6 @@ export function TestCaseTab({
               </div>
             </div>
           ))}
-
-          {/* Also show the raw LC data_input if available */}
-          {exampleTestcaseList[activeIndex] && (
-            <div>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: "#45475a",
-                  marginBottom: 4,
-                  ...monoStyle,
-                }}
-              >
-                raw data_input (sent to LeetCode judge)
-              </label>
-              <div
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  fontSize: 11,
-                  border: "1px solid #313244",
-                  backgroundColor: "#11111b",
-                  color: "#585b70",
-                  whiteSpace: "pre-wrap",
-                  ...monoStyle,
-                }}
-              >
-                {exampleTestcaseList[activeIndex]}
-              </div>
-            </div>
-          )}
         </div>
       ) : null}
     </div>

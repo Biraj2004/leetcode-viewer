@@ -281,7 +281,7 @@ export function TopBar({
   isSubmitting,
 }: TopBarProps) {
   const DRAWER_ANIMATION_MS = 220;
-  const [timerActive, setTimerActive] = useState(false);
+  const [timerActive, setTimerActive] = useState(true);   // auto-start on load
   const [seconds,     setSeconds]     = useState(0);
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [isDrawerMounted, setIsDrawerMounted] = useState(false);

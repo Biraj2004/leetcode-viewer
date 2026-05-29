@@ -9,7 +9,7 @@
  *   - Right detail: Accepted/WA stats, percentile bars, code, failing case
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   MessageSquare,
   Clock,
@@ -21,6 +21,7 @@ import {
   Zap,
   MemoryStick,
   Trash2,
+  Copy,
 } from "lucide-react";
 import {
   getSubmissions,
@@ -126,6 +127,26 @@ function SubmissionDetail({
   const accepted = isAccepted(record);
   const color = statusColor(record);
   const isCompileErr = record.statusId === 20;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyCode = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(record.code);
+    } catch {
+      // fallback for older browsers / HTTP
+      const el = document.createElement("textarea");
+      el.value = record.code;
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [record.code]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -146,7 +167,7 @@ function SubmissionDetail({
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ flex: 1, overflow: "hidden", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
         {/* Status row */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {accepted
@@ -244,8 +265,8 @@ function SubmissionDetail({
         )}
 
         {/* Code */}
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexShrink: 0 }}>
             <span style={{ fontSize: 12, color: "#6c7086" }}>Code</span>
             <span style={{
               fontSize: 11, padding: "1px 6px", borderRadius: 4,
@@ -254,12 +275,31 @@ function SubmissionDetail({
               {record.lang}
             </span>
             <span style={{ fontSize: 11, color: "#45475a" }}>{formatDate(record.timestamp)} {formatTime(record.timestamp)}</span>
+            {/* Copy code button */}
+            <button
+              onClick={handleCopyCode}
+              title="Copy code"
+              style={{
+                marginLeft: "auto",
+                display: "flex", alignItems: "center", gap: 4,
+                background: "none", border: "1px solid #313244",
+                borderRadius: 5, padding: "3px 8px",
+                cursor: "pointer",
+                color: copied ? "#a6e3a1" : "#6c7086",
+                fontSize: 11, transition: "color 0.15s, border-color 0.15s",
+                borderColor: copied ? "rgba(166,227,161,0.4)" : "#313244",
+              }}
+            >
+              {copied ? <Check size={11} /> : <Copy size={11} />}
+              {copied ? "Copied" : "Copy"}
+            </button>
           </div>
           <pre style={{
             margin: 0, padding: "14px 16px", borderRadius: 8,
             backgroundColor: "#11111b", border: "1px solid #313244",
             color: "#cdd6f4", fontSize: 12, lineHeight: 1.65,
-            overflowX: "auto", maxHeight: 320, overflowY: "auto",
+            overflowX: "auto", overflowY: "auto",
+            flex: 1, minHeight: 0,
             whiteSpace: "pre", ...monoStyle,
           }}>
             {record.code}

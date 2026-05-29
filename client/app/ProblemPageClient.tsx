@@ -145,7 +145,7 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
       />
 
       <div style={{ flex: 1, overflow: "hidden", padding: 6 }}>
-        <PanelGroup direction="horizontal" autoSaveId="main-layout">
+        <PanelGroup direction="horizontal">
           <Panel defaultSize={42} minSize={25}>
             <div style={{ height: "100%", paddingRight: 3 }}>
               {/* key forces full remount when problem changes — resets all tab state */}

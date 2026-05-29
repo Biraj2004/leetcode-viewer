@@ -50,9 +50,12 @@ export function DescriptionTab({ problem }: DescriptionTabProps) {
 
       <Divider />
 
-      <HintsTab hints={problem.hints} />
-
-      <Divider />
+      {problem.hints.length > 0 && (
+        <>
+          <HintsTab hints={problem.hints} />
+          <Divider />
+        </>
+      )}
 
       <SimilarQuestionsSection questions={problem.similarQuestions} />
     </div>

@@ -46,6 +46,11 @@ export interface ExecuteResult {
   lastTestcase?: string;     // the failing input
   expectedOutput?: string;   // what LC expected
   codeOutput?: string;       // what our code produced
+  // For LC run: the per-case outputs returned from the judge
+  // code_output from LC is newline-delimited if multiple cases
+  allCodeOutputs?: string[];   // one entry per test case
+  allExpectedOutputs?: string[]; // one entry per test case
+  allInputs?: string[];        // the raw data_input strings sent (one per case)
 }
 
 // Ref handle exposed by EditorPanel to the parent page

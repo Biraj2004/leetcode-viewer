@@ -126,16 +126,32 @@ function PlaygroundBlock({ codes }: { codes: PlaygroundCode[] }) {
   const boxHeight = Math.min(MAX_CODE_BOX_HEIGHT, neededHeight);
   const shouldScrollY = neededHeight > MAX_CODE_BOX_HEIGHT;
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = useCallback(() => {
     if (!active?.code) return;
-    try {
-      await navigator.clipboard.writeText(active.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // clipboard not available — ignore
+    const text = active.code;
+    // Try modern clipboard API first; fall back to execCommand
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }, [active?.code]);
+
+  function fallbackCopy(text: string) {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.position = "fixed";
+    el.style.opacity = "0";
+    el.style.top = "0";
+    el.style.left = "0";
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    try { document.execCommand("copy"); } catch { /* nothing */ }
+    document.body.removeChild(el);
+  }
 
   return (
     <div style={{ border: "1px solid #313244", borderRadius: 8, overflow: "hidden", margin: "0 0 20px" }}>
