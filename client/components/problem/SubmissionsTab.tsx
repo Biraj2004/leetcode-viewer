@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  ChevronLeft, Check, X, Loader2, AlertTriangle, Zap, MemoryStick,
+  ChevronLeft, Check, X, Loader2, AlertTriangle, Zap, MemoryStick, User, Clock, Cpu
 } from "lucide-react";
 import { getSubmissionRefs } from "../../lib/submissionsStore";
 import type { StoredSubmissionRef } from "../../lib/submissionsStore";
@@ -68,52 +68,179 @@ function StatusDot({ statusId }: { statusId: number }) {
 /* ─── Distribution bar chart (shown in detail) ────────────────────────────────── */
 
 function DistributionChart({
-  data, myValue, label, unit, color,
+  data, myValue, unit, color,
 }: {
   data: Array<[number, number]>;
   myValue?: number;
-  label: string;
   unit: string;
   color: string;
 }) {
   if (!data || data.length === 0) return null;
+
   const maxPct = Math.max(...data.map(([, p]) => p));
-  const chartH = 72;
+  const chartH = 150;
+  const barW = 10;
+  const barGap = 4;
+
+  const gridLines = [maxPct, maxPct * 0.75, maxPct * 0.5, maxPct * 0.25, 0];
+
   const myIdx = myValue != null
     ? data.reduce((best, _, i) =>
         Math.abs(data[i][0] - myValue) < Math.abs(data[best][0] - myValue) ? i : best, 0)
     : -1;
 
-  const showEveryN = Math.max(1, Math.floor(data.length / 7));
+  // To prevent label overlapping, calculate how many labels we can reasonably fit.
+  // Assuming a typical container width of ~600px, we can fit ~12 labels max.
+  const showEveryN = Math.max(1, Math.ceil(data.length / 12));
+
+  const formatLabel = (val: number, u: string) => {
+    if (u === "KB" && val >= 1000) {
+      return `${(val / 1000).toFixed(1)}MB`;
+    }
+    return `${val}${u.toLowerCase()}`; // e.g. 'mb' or 'ms' like LC
+  };
 
   return (
-    <div style={{ marginTop: 6 }}>
-      <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-        {label}
-      </p>
-      {/* Bars */}
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: chartH }}>
-        {data.map(([val, pct], i) => {
-          const h = maxPct > 0 ? (pct / maxPct) * chartH : 0;
-          const isMe = i === myIdx;
-          return (
-            <div
-              key={val}
-              title={`${val}${unit}: ${pct.toFixed(2)}%`}
-              style={{ flex: "0 0 4px", height: h, backgroundColor: isMe ? "#f9e2af" : color, borderRadius: "2px 2px 0 0", opacity: isMe ? 1 : 0.7 }}
-            />
-          );
-        })}
-      </div>
-      {/* X-axis labels */}
-      <div style={{ display: "flex", gap: 1, marginTop: 2 }}>
-        {data.map(([val], i) => (
-          i % showEveryN === 0 ? (
-            <div key={val} style={{ flex: "0 0 4px", fontSize: 8.5, color: "#45475a", whiteSpace: "nowrap", overflow: "visible" }}>
-              {val}{unit}
+    <div style={{ marginTop: 8 }}>
+      {/* Chart Container */}
+      <div style={{ display: "flex", gap: 12 }}>
+        {/* Y-axis labels */}
+        <div style={{ position: "relative", width: 32, height: chartH, marginTop: 28 }}>
+          {gridLines.map((val, i) => (
+            <span
+              key={i}
+              style={{
+                position: "absolute",
+                top: `${(i / 4) * 100}%`,
+                right: 0,
+                transform: "translateY(-50%)",
+                fontSize: 10,
+                color: "#585b70",
+              }}
+            >
+              {Math.round(val)}%
+            </span>
+          ))}
+        </div>
+
+        {/* Chart + X-axis area */}
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+          {/* Background grid lines */}
+          <div style={{ position: "absolute", top: 28, left: 0, right: 0, height: chartH, zIndex: 0 }}>
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                style={{
+                  position: "absolute",
+                  top: `${(i / 4) * 100}%`,
+                  left: 0,
+                  right: 0,
+                  height: 1,
+                  backgroundColor: i === 4 ? "#45475a" : "#313244",
+                }}
+              />
+            ))}
+          </div>
+
+          <div style={{ position: "relative", zIndex: 1, paddingBottom: 8, width: "100%" }}>
+            <div style={{ display: "flex", alignItems: "flex-end", height: chartH + 28 }}>
+              {data.map(([val, pct], i) => {
+                const h = maxPct > 0 ? (pct / maxPct) * chartH : 0;
+                const isMe = i === myIdx;
+                return (
+                  <div
+                    key={val}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "flex-end",
+                      height: "100%",
+                      flex: 1,
+                      minWidth: 0,
+                      position: "relative"
+                    }}
+                  >
+                    {/* "You" marker above the bar */}
+                    {isMe && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          bottom: h,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          zIndex: 10,
+                          transform: "translateY(-4px)"
+                        }}
+                      >
+                        <div style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: "50%",
+                          backgroundColor: "#11111b",
+                          border: "2px solid #89b4fa",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#cdd6f4",
+                          overflow: "hidden",
+                          boxShadow: "0 2px 4px rgba(0,0,0,0.4)"
+                        }}>
+                          <User size={14} />
+                        </div>
+                        {/* Stem connecting marker to bar */}
+                        <div style={{
+                          width: 2,
+                          height: 8,
+                          backgroundColor: "#89b4fa"
+                        }} />
+                      </div>
+                    )}
+                    {/* Bar */}
+                    <div
+                      title={`${pct.toFixed(2)}% of solutions used ${formatLabel(val, unit)} of ${unit === "KB" ? "memory" : "runtime"}`}
+                      style={{
+                        width: "80%",
+                        maxWidth: 24,
+                        height: Math.max(h, 2), // Ensure tiny bars are still visible
+                        backgroundColor: color,
+                        borderRadius: "2px 2px 0 0",
+                        opacity: isMe ? 1 : 0.5,
+                        transition: "opacity 0.15s, height 0.3s ease",
+                        cursor: "pointer",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      onMouseLeave={(e) => { if (!isMe) e.currentTarget.style.opacity = "0.5"; }}
+                    />
+                  </div>
+                );
+              })}
             </div>
-          ) : <div key={val} style={{ flex: "0 0 4px" }} />
-        ))}
+            
+            {/* X-axis labels */}
+            <div style={{ display: "flex", width: "100%", marginTop: 8, height: 16 }}>
+              {data.map(([val], i) => (
+                <div key={val} style={{ flex: 1, minWidth: 0, position: "relative" }}>
+                  {i % showEveryN === 0 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        fontSize: 10,
+                        color: "#6c7086",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {formatLabel(val, unit)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -153,6 +280,8 @@ function SubmissionDetail({
   error: string | null;
   onBack: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"runtime" | "memory">("runtime");
+
   const accepted = subRef.statusId === 10;
   const statusColor = accepted ? "#a6e3a1" : "#f38ba8";
 
@@ -208,47 +337,91 @@ function SubmissionDetail({
           <>
             {/* Stats + charts for accepted */}
             {accepted && (
-              <div style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #313244", backgroundColor: "#181825", display: "flex", flexDirection: "column", gap: 14 }}>
-                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+              <div style={{ padding: "20px 24px", borderRadius: 12, border: "1px solid #313244", backgroundColor: "#181825", display: "flex", flexDirection: "column", gap: 24 }}>
+                {/* Tabs / Stat Cards */}
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  {/* Runtime Card */}
                   {detail.runtimeDisplay && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                      <Zap size={13} style={{ color: "#89b4fa" }} />
-                      <div>
-                        <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
-                        <p style={{ fontSize: 14, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                    <div
+                      onClick={() => setActiveTab("runtime")}
+                      style={{
+                        flex: 1,
+                        minWidth: 200,
+                        padding: "16px 20px",
+                        borderRadius: 12,
+                        backgroundColor: activeTab === "runtime" ? "#313244" : "#1e1e2e",
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Clock size={16} style={{ color: "#a6adc8" }} />
+                        <span style={{ fontSize: 14, color: "#a6adc8", fontWeight: 600 }}>Runtime</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                        <span style={{ fontSize: 24, fontWeight: 700, color: "#cdd6f4" }}>
                           {detail.runtimeDisplay}
-                          {detail.runtimePercentile != null && (
-                            <span style={{ fontSize: 11, fontWeight: 400, color: "#89b4fa", marginLeft: 7 }}>
-                              Beats {detail.runtimePercentile.toFixed(2)}%
-                            </span>
-                          )}
-                        </p>
+                        </span>
+                        {detail.runtimePercentile != null && (
+                          <span style={{ fontSize: 14, color: "#6c7086" }}>
+                            Beats <span style={{ fontWeight: 700, color: "#cdd6f4" }}>{detail.runtimePercentile.toFixed(2)}%</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}
+
+                  {/* Memory Card */}
                   {detail.memoryDisplay && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                      <MemoryStick size={13} style={{ color: "#a6e3a1" }} />
-                      <div>
-                        <p style={{ fontSize: 10, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
-                        <p style={{ fontSize: 14, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                    <div
+                      onClick={() => setActiveTab("memory")}
+                      style={{
+                        flex: 1,
+                        minWidth: 200,
+                        padding: "16px 20px",
+                        borderRadius: 12,
+                        backgroundColor: activeTab === "memory" ? "#313244" : "#1e1e2e",
+                        cursor: "pointer",
+                        transition: "all 0.2s ease",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Cpu size={16} style={{ color: "#a6adc8" }} />
+                        <span style={{ fontSize: 14, color: "#a6adc8", fontWeight: 600 }}>Memory</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                        <span style={{ fontSize: 24, fontWeight: 700, color: "#cdd6f4" }}>
                           {detail.memoryDisplay}
-                          {detail.memoryPercentile != null && (
-                            <span style={{ fontSize: 11, fontWeight: 400, color: "#a6e3a1", marginLeft: 7 }}>
-                              Beats {detail.memoryPercentile.toFixed(2)}%
-                            </span>
-                          )}
-                        </p>
+                        </span>
+                        {detail.memoryPercentile != null && (
+                          <span style={{ fontSize: 14, color: "#6c7086" }}>
+                            Beats <span style={{ fontWeight: 700, color: "#cdd6f4" }}>{detail.memoryPercentile.toFixed(2)}%</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
-                {detail.runtime_distribution && detail.runtime_distribution.length > 0 && (
-                  <DistributionChart data={detail.runtime_distribution} myValue={myRuntimeMs} label="Runtime Distribution" unit="ms" color="#89b4fa" />
-                )}
-                {detail.memory_distribution && detail.memory_distribution.length > 0 && (
-                  <DistributionChart data={detail.memory_distribution} myValue={myMemoryKB} label="Memory Distribution" unit="KB" color="#a6e3a1" />
-                )}
+
+                {/* Chart Container with animation */}
+                <div style={{ minHeight: 180, position: "relative", paddingBottom: 8 }}>
+                  {activeTab === "runtime" && detail.runtime_distribution && detail.runtime_distribution.length > 0 && (
+                    <div style={{ animation: "fadeIn 0.3s ease-out" }}>
+                      <DistributionChart data={detail.runtime_distribution} myValue={myRuntimeMs} unit="ms" color="#89b4fa" />
+                    </div>
+                  )}
+                  {activeTab === "memory" && detail.memory_distribution && detail.memory_distribution.length > 0 && (
+                    <div style={{ animation: "fadeIn 0.3s ease-out" }}>
+                      <DistributionChart data={detail.memory_distribution} myValue={myMemoryKB} unit="KB" color="#89b4fa" />
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
