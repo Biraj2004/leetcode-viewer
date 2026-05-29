@@ -1,15 +1,16 @@
 /**
  * ResultTab.tsx
  *
- * Shows the execution result after Run or Submit.
- * Handles both Judge0 and LeetCode provider results.
- *
- * LeetCode run  → expanded card per test case (input / expected / actual / pass-fail)
- * LeetCode submit → percentile bars (Accepted) or failing case details (WA)
- * Judge0        → original per-case diff view
+ * Shows execution results:
+ * - LC run  → tab per case (Case 1 / Case 2 / …) + detail panel with Input/Expected/Output/Stdout
+ * - LC submit → percentile bars + distribution chart (bar chart from runtimeDistribution)
+ * - Judge0   → same tab-per-case layout
  */
 
-import { Check, X, Clock, Cpu, AlertTriangle, Zap, MemoryStick } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Check, X, AlertTriangle, Zap, MemoryStick, Clock, Cpu } from "lucide-react";
 import type { ExecuteResult, CaseResult } from "../../../types/execution";
 
 interface ResultTabProps {
@@ -24,27 +25,17 @@ const monoStyle: React.CSSProperties = {
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
-function StatusHeader({ result }: { result: ExecuteResult }) {
+function StatusBadge({ result }: { result: ExecuteResult }) {
   const isAccepted = result.status.id === 10 || result.status.id === 3;
-  const statusColor = isAccepted ? "#a6e3a1" : "#f38ba8";
-
+  const color = isAccepted ? "#a6e3a1" : "#f38ba8";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      {isAccepted ? (
-        <Check size={22} style={{ color: statusColor }} />
-      ) : (
-        <X size={22} style={{ color: statusColor }} />
-      )}
-      <span style={{ fontSize: 20, fontWeight: 700, color: statusColor }}>
-        {result.status.description}
-      </span>
-      {result.provider === "judge0" && result.totalCases > 0 && (
-        <span style={{ fontSize: 13, color: "#6c7086" }}>
-          ({result.passedCount}/{result.totalCases} cases)
-        </span>
-      )}
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      {isAccepted
+        ? <Check size={18} style={{ color }} />
+        : <X size={18} style={{ color }} />}
+      <span style={{ fontSize: 18, fontWeight: 700, color }}>{result.status.description}</span>
       {result.provider === "leetcode" && result.mode === "submit" && result.totalTestcases && (
-        <span style={{ fontSize: 13, color: "#6c7086" }}>
+        <span style={{ fontSize: 12, color: "#6c7086" }}>
           ({result.totalCorrect}/{result.totalTestcases} tests)
         </span>
       )}
@@ -52,42 +43,27 @@ function StatusHeader({ result }: { result: ExecuteResult }) {
   );
 }
 
-function PercentileBar({ value, label, color }: { value: number; label: string; color: string }) {
-  return (
-    <div style={{ flex: 1 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ fontSize: 12, color: "#6c7086" }}>{label}</span>
-        <span style={{ fontSize: 14, fontWeight: 700, color }}>{value.toFixed(1)}%</span>
-      </div>
-      <div style={{ height: 4, borderRadius: 2, backgroundColor: "#313244", overflow: "hidden" }}>
-        <div
-          style={{
-            height: "100%",
-            width: `${Math.min(100, value)}%`,
-            borderRadius: 2,
-            backgroundColor: color,
-            transition: "width 0.8s ease",
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** Labelled code block — larger font for readability */
-function CodeBlock({ label, value, color = "#cdd6f4" }: { label: string; value: string; color?: string }) {
+function CodeBox({
+  label,
+  value,
+  color = "#cdd6f4",
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
   return (
     <div>
-      <p style={{ fontSize: 13, color: "#6c7086", margin: "0 0 6px", fontWeight: 500 }}>{label}</p>
+      <p style={{ fontSize: 12, color: "#6c7086", margin: "0 0 5px", fontWeight: 500 }}>{label}</p>
       <pre
         style={{
-          padding: "10px 14px",
+          margin: 0,
+          padding: "8px 12px",
           borderRadius: 6,
-          backgroundColor: "#181825",
+          backgroundColor: "#11111b",
           border: "1px solid #313244",
           color,
-          fontSize: 14,
-          margin: 0,
+          fontSize: 13,
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
           lineHeight: 1.6,
@@ -100,232 +76,316 @@ function CodeBlock({ label, value, color = "#cdd6f4" }: { label: string; value: 
   );
 }
 
-// ── LC run: expanded card per test case ───────────────────────────────────────
+// ── Distribution Bar Chart ─────────────────────────────────────────────────────
+// runtimeDistribution from GraphQL is an array of [runtime_ms, percentage]
 
-function CaseCard({ c, index, input }: { c: CaseResult; index: number; input?: string }) {
-  const passed = c.passed;
-  const borderColor = passed ? "rgba(166,227,161,0.3)" : "rgba(243,139,168,0.3)";
-  const headerBg    = passed ? "rgba(166,227,161,0.06)" : "rgba(243,139,168,0.06)";
+function DistributionChart({
+  data,
+  myValue,
+  label,
+  unit,
+  color,
+}: {
+  data: Array<[number, number]>;
+  myValue?: number;
+  label: string;
+  unit: string;
+  color: string;
+}) {
+  if (!data || data.length === 0) return null;
+
+  const maxPct = Math.max(...data.map(([, pct]) => pct));
+  const chartHeight = 80;
+
+  // Find closest bar to myValue
+  const myIdx = myValue != null
+    ? data.reduce((best, [val], i) => {
+        const curr = data[i][0];
+        const bestVal = data[best][0];
+        return Math.abs(curr - myValue) < Math.abs(bestVal - myValue) ? i : best;
+      }, 0)
+    : -1;
+
+  // Only show every Nth label to avoid overcrowding
+  const showEveryN = Math.max(1, Math.floor(data.length / 8));
 
   return (
-    <div
-      style={{
-        borderRadius: 8,
-        border: `1px solid ${borderColor}`,
-        overflow: "hidden",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "8px 14px",
-          backgroundColor: headerBg,
-          borderBottom: `1px solid ${borderColor}`,
-        }}
-      >
-        {passed
-          ? <Check size={14} style={{ color: "#a6e3a1" }} />
-          : <X size={14} style={{ color: "#f38ba8" }} />}
-        <span
-          style={{
-            fontSize: 14,
-            fontWeight: 600,
-            color: passed ? "#a6e3a1" : "#f38ba8",
-          }}
-        >
-          Case {index + 1}
-        </span>
-        <span style={{ fontSize: 12, color: "#45475a", marginLeft: "auto" }}>
-          {passed ? "Passed" : "Failed"}
-        </span>
+    <div style={{ marginTop: 8 }}>
+      <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        {label} Distribution
+      </p>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: chartHeight, overflowX: "auto" }}>
+        {data.map(([val, pct], i) => {
+          const barH = maxPct > 0 ? (pct / maxPct) * chartHeight : 0;
+          const isMe = i === myIdx;
+          return (
+            <div
+              key={val}
+              title={`${val}${unit}: ${pct.toFixed(2)}%`}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                minWidth: 4,
+                flex: "0 0 auto",
+              }}
+            >
+              <div
+                style={{
+                  width: 4,
+                  height: barH,
+                  backgroundColor: isMe ? "#f9e2af" : color,
+                  borderRadius: "2px 2px 0 0",
+                  opacity: isMe ? 1 : 0.75,
+                  transition: "height 0.4s ease",
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
-
-      {/* Body */}
-      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10, backgroundColor: "#181825" }}>
-        {/* Input — shown only if we have the raw string */}
-        {input && (
-          <div>
-            <p style={{ fontSize: 12, color: "#6c7086", margin: "0 0 5px", fontWeight: 500 }}>Input</p>
-            <pre style={{
-              margin: 0, padding: "8px 12px", borderRadius: 6,
-              backgroundColor: "#11111b", border: "1px solid #313244",
-              color: "#cdd6f4", fontSize: 14, whiteSpace: "pre-wrap",
-              wordBreak: "break-all", lineHeight: 1.6, ...monoStyle,
-            }}>
-              {input}
-            </pre>
-          </div>
-        )}
-
-        {/* Expected output */}
-        {c.expectedOutput && (
-          <div>
-            <p style={{ fontSize: 12, color: "#6c7086", margin: "0 0 5px", fontWeight: 500 }}>Expected Output</p>
-            <pre style={{
-              margin: 0, padding: "8px 12px", borderRadius: 6,
-              backgroundColor: "#11111b", border: "1px solid #313244",
-              color: "#a6e3a1", fontSize: 14, whiteSpace: "pre-wrap",
-              wordBreak: "break-all", lineHeight: 1.6, ...monoStyle,
-            }}>
-              {c.expectedOutput}
-            </pre>
-          </div>
-        )}
-
-        {/* Actual output */}
-        {c.actualOutput && (
-          <div>
-            <p style={{ fontSize: 12, color: "#6c7086", margin: "0 0 5px", fontWeight: 500 }}>Your Output</p>
-            <pre style={{
-              margin: 0, padding: "8px 12px", borderRadius: 6,
-              backgroundColor: "#11111b", border: "1px solid #313244",
-              color: passed ? "#a6e3a1" : "#f38ba8",
-              fontSize: 14, whiteSpace: "pre-wrap",
-              wordBreak: "break-all", lineHeight: 1.6, ...monoStyle,
-            }}>
-              {c.actualOutput}
-            </pre>
-          </div>
-        )}
+      {/* X-axis labels */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 1, overflowX: "hidden" }}>
+        {data.map(([val], i) => (
+          i % showEveryN === 0 ? (
+            <div
+              key={val}
+              style={{
+                minWidth: 4,
+                flex: "0 0 auto",
+                fontSize: 9,
+                color: "#45475a",
+                marginTop: 2,
+                whiteSpace: "nowrap",
+                overflow: "visible",
+              }}
+            >
+              {val}{unit}
+            </div>
+          ) : (
+            <div key={val} style={{ minWidth: 4, flex: "0 0 auto" }} />
+          )
+        ))}
       </div>
     </div>
   );
 }
 
-// ── LeetCode run result ────────────────────────────────────────────────────────
+// ── Tab-style case selector ────────────────────────────────────────────────────
+
+function CaseTabs({
+  cases,
+  activeIdx,
+  onSelect,
+}: {
+  cases: CaseResult[];
+  activeIdx: number;
+  onSelect: (i: number) => void;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
+      {cases.map((c, i) => {
+        const isActive = i === activeIdx;
+        return (
+          <button
+            key={c.caseId}
+            onClick={() => onSelect(i)}
+            style={{
+              padding: "4px 12px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              border: "none",
+              cursor: "pointer",
+              backgroundColor: isActive ? "#313244" : "transparent",
+              color: isActive
+                ? (c.passed ? "#a6e3a1" : "#f38ba8")
+                : (c.passed ? "rgba(166,227,161,0.6)" : "rgba(243,139,168,0.6)"),
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              transition: "background-color 0.1s",
+            }}
+          >
+            {c.passed
+              ? <Check size={10} />
+              : <X size={10} />}
+            Case {i + 1}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── LC run result: tabs per case ───────────────────────────────────────────────
 
 function LCRunResult({ result }: { result: ExecuteResult }) {
+  const [activeCaseIdx, setActiveCaseIdx] = useState(0);
   const isCompileError = result.status.id === 20;
   const cases = result.caseResults;
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <StatusHeader result={result} />
+  const activeCase = cases[activeCaseIdx];
+  const activeInput = result.allInputs?.[activeCaseIdx];
+  const hasStdout = activeCase?.stdout && activeCase.stdout.trim().length > 0;
 
-      {/* Compile error */}
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <StatusBadge result={result} />
+
+      {/* Compile error — no tabs */}
       {isCompileError && result.compileOutput && (
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
             <AlertTriangle size={13} style={{ color: "#f9e2af" }} />
-            <p style={{ fontSize: 13, color: "#f9e2af", margin: 0 }}>Compile Error</p>
+            <span style={{ fontSize: 13, color: "#f9e2af" }}>Compile Error</span>
           </div>
-          <CodeBlock label="" value={result.compileOutput} color="#f9e2af" />
+          <CodeBox label="" value={result.compileOutput} color="#f9e2af" />
         </div>
       )}
 
-      {/* Runtime error */}
+      {/* Runtime error — show above tabs */}
       {result.stderr && !isCompileError && (
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
             <AlertTriangle size={13} style={{ color: "#f38ba8" }} />
-            <p style={{ fontSize: 13, color: "#f38ba8", margin: 0 }}>Runtime Error</p>
+            <span style={{ fontSize: 13, color: "#f38ba8" }}>Runtime Error</span>
           </div>
-          <CodeBlock label="" value={result.stderr} color="#f38ba8" />
+          <CodeBox label="" value={result.stderr} color="#f38ba8" />
         </div>
       )}
 
-      {/* Expanded cards for each test case */}
-      {!isCompileError && !result.stderr && cases.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {cases.map((c, i) => (
-            <CaseCard
-              key={c.caseId}
-              c={c}
-              index={i}
-              input={result.allInputs?.[i]}
-            />
-          ))}
-        </div>
+      {/* Case tabs + detail — show always (even with runtime errors) */}
+      {!isCompileError && cases.length > 0 && (
+        <>
+          <CaseTabs cases={cases} activeIdx={activeCaseIdx} onSelect={setActiveCaseIdx} />
+
+          {activeCase && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Input */}
+              {activeInput && <CodeBox label="Input" value={activeInput} />}
+
+              {/* Expected output */}
+              {activeCase.expectedOutput && (
+                <CodeBox label="Expected Output" value={activeCase.expectedOutput} color="#a6e3a1" />
+              )}
+
+              {/* Your output */}
+              {activeCase.actualOutput && (
+                <CodeBox
+                  label="Your Output"
+                  value={activeCase.actualOutput}
+                  color={activeCase.passed ? "#a6e3a1" : "#f38ba8"}
+                />
+              )}
+
+              {/* Stdout (console.log / print) — always show when present */}
+              {activeCase.stdout && activeCase.stdout.trim() && (
+                <CodeBox label="Stdout" value={activeCase.stdout} color="#89b4fa" />
+              )}
+            </div>
+          )}
+        </>
       )}
 
-      {/* No case data at all */}
-      {!isCompileError && !result.stderr && cases.length === 0 && (
-        <p style={{ fontSize: 14, color: "#6c7086", margin: 0 }}>
+      {/* Edge: no cases returned */}
+      {!isCompileError && cases.length === 0 && (
+        <p style={{ fontSize: 13, color: "#6c7086", margin: 0 }}>
           No test case results returned.
         </p>
-      )}
-
-      {/* Runtime / Memory */}
-      {(result.statusRuntime || result.statusMemory) && (
-        <div style={{ display: "flex", gap: 24 }}>
-          {result.statusRuntime && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Zap size={13} style={{ color: "#6c7086" }} />
-              <div>
-                <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
-                <p style={{ fontSize: 15, fontWeight: 600, color: "#cdd6f4", margin: 0 }}>
-                  {result.statusRuntime}
-                </p>
-              </div>
-            </div>
-          )}
-          {result.statusMemory && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <MemoryStick size={13} style={{ color: "#6c7086" }} />
-              <div>
-                <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
-                <p style={{ fontSize: 15, fontWeight: 600, color: "#cdd6f4", margin: 0 }}>
-                  {result.statusMemory}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
       )}
     </div>
   );
 }
 
-// ── LeetCode submit result ─────────────────────────────────────────────────────
+
+// ── LC submit result ───────────────────────────────────────────────────────────
 
 function LCSubmitResult({ result }: { result: ExecuteResult }) {
   const isAccepted = result.status.id === 10;
   const isCompileError = result.status.id === 20;
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <StatusHeader result={result} />
+  // Parse runtime from statusRuntime like "41 ms" → 41
+  const myRuntimeMs = result.statusRuntime
+    ? parseInt(result.statusRuntime.replace(/[^0-9]/g, ""), 10)
+    : undefined;
+  // Parse memory from statusMemory like "57.34 MB" → 57340 (KB)
+  const myMemoryMB = result.statusMemory
+    ? parseFloat(result.statusMemory.replace(/[^0-9.]/g, ""))
+    : undefined;
 
-      {/* Accepted: show percentile bars */}
-      {isAccepted && (result.runtimePercentile !== undefined || result.memoryPercentile !== undefined) && (
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <StatusBadge result={result} />
+
+      {/* Accepted: runtime + memory stats + chart */}
+      {isAccepted && (
         <div
           style={{
             padding: "14px 16px",
             borderRadius: 8,
             border: "1px solid #313244",
             backgroundColor: "#181825",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
           }}
         >
-          <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 12px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            Performance
-          </p>
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-            {result.runtimePercentile !== undefined && (
-              <div style={{ display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                  <Zap size={13} style={{ color: "#89b4fa" }} />
-                  <span style={{ fontSize: 12, color: "#6c7086" }}>
-                    Runtime: <strong style={{ color: "#cdd6f4" }}>{result.statusRuntime}</strong>
-                  </span>
+          {/* Stats row */}
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            {result.statusRuntime && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Zap size={14} style={{ color: "#89b4fa" }} />
+                <div>
+                  <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
+                  <p style={{ fontSize: 15, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                    {result.statusRuntime}
+                    {result.runtimePercentile != null && (
+                      <span style={{ fontSize: 12, fontWeight: 400, color: "#89b4fa", marginLeft: 8 }}>
+                        Beats {result.runtimePercentile.toFixed(2)}%
+                      </span>
+                    )}
+                  </p>
                 </div>
-                <PercentileBar label="Faster than" value={result.runtimePercentile} color="#89b4fa" />
               </div>
             )}
-            {result.memoryPercentile !== undefined && (
-              <div style={{ display: "flex", flexDirection: "column", flex: 1, gap: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                  <MemoryStick size={13} style={{ color: "#a6e3a1" }} />
-                  <span style={{ fontSize: 12, color: "#6c7086" }}>
-                    Memory: <strong style={{ color: "#cdd6f4" }}>{result.statusMemory}</strong>
-                  </span>
+            {result.statusMemory && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <MemoryStick size={14} style={{ color: "#a6e3a1" }} />
+                <div>
+                  <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
+                  <p style={{ fontSize: 15, fontWeight: 700, color: "#cdd6f4", margin: 0 }}>
+                    {result.statusMemory}
+                    {result.memoryPercentile != null && (
+                      <span style={{ fontSize: 12, fontWeight: 400, color: "#a6e3a1", marginLeft: 8 }}>
+                        Beats {result.memoryPercentile.toFixed(2)}%
+                      </span>
+                    )}
+                  </p>
                 </div>
-                <PercentileBar label="Less memory than" value={result.memoryPercentile} color="#a6e3a1" />
               </div>
             )}
           </div>
+
+          {/* Distribution charts */}
+          {result.runtimeDistribution && result.runtimeDistribution.length > 0 && (
+            <DistributionChart
+              data={result.runtimeDistribution}
+              myValue={myRuntimeMs}
+              label="Runtime"
+              unit="ms"
+              color="#89b4fa"
+            />
+          )}
+          {result.memoryDistribution && result.memoryDistribution.length > 0 && (
+            <DistributionChart
+              data={result.memoryDistribution}
+              myValue={myMemoryMB != null ? myMemoryMB * 1024 : undefined}
+              label="Memory"
+              unit="KB"
+              color="#a6e3a1"
+            />
+          )}
         </div>
       )}
 
@@ -334,9 +394,9 @@ function LCSubmitResult({ result }: { result: ExecuteResult }) {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
             <AlertTriangle size={13} style={{ color: "#f9e2af" }} />
-            <p style={{ fontSize: 13, color: "#f9e2af", margin: 0 }}>Compile Error</p>
+            <span style={{ fontSize: 13, color: "#f9e2af" }}>Compile Error</span>
           </div>
-          <CodeBlock label="" value={result.compileOutput} color="#f9e2af" />
+          <CodeBox label="" value={result.compileOutput} color="#f9e2af" />
         </div>
       )}
 
@@ -345,159 +405,92 @@ function LCSubmitResult({ result }: { result: ExecuteResult }) {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
             <AlertTriangle size={13} style={{ color: "#f38ba8" }} />
-            <p style={{ fontSize: 13, color: "#f38ba8", margin: 0 }}>Runtime Error</p>
+            <span style={{ fontSize: 13, color: "#f38ba8" }}>Runtime Error</span>
           </div>
-          <CodeBlock label="" value={result.stderr} color="#f38ba8" />
+          <CodeBox label="" value={result.stderr} color="#f38ba8" />
         </div>
       )}
 
-      {/* Wrong Answer: failing test case details */}
+      {/* Wrong Answer details */}
       {!isAccepted && !isCompileError && !result.stderr && result.lastTestcase && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <CodeBlock label="Input" value={result.lastTestcase} />
+          <CodeBox label="Input" value={result.lastTestcase} />
           {result.expectedOutput && (
-            <CodeBlock label="Expected Output" value={result.expectedOutput} color="#a6e3a1" />
+            <CodeBox label="Expected Output" value={result.expectedOutput} color="#a6e3a1" />
           )}
           {result.codeOutput && (
-            <CodeBlock label="Your Output" value={result.codeOutput} color="#f38ba8" />
+            <CodeBox label="Your Output" value={result.codeOutput} color="#f38ba8" />
           )}
         </div>
       )}
 
-      {/* TLE / MLE — no extra detail */}
-      {!isAccepted && !isCompileError && !result.stderr && !result.lastTestcase && (
-        <p style={{ fontSize: 14, color: "#6c7086", margin: 0 }}>
-          No additional details available for this status.
-        </p>
+      {/* Stdout */}
+      {result.stdout && result.stdout.trim().length > 0 && (
+        <CodeBox label="Stdout" value={result.stdout} color="#89b4fa" />
       )}
     </div>
   );
 }
 
-// ── Judge0 result (original) ───────────────────────────────────────────────────
+// ── Judge0 result ─────────────────────────────────────────────────────────────
 
 function Judge0Result({ result }: { result: ExecuteResult }) {
-  const isAccepted = result.status.id === 3;
+  const [activeCaseIdx, setActiveCaseIdx] = useState(0);
+  const cases = result.caseResults;
+  const activeCase = cases[activeCaseIdx];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <StatusHeader result={result} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <StatusBadge result={result} />
 
-      {/* Case result pills */}
-      {result.caseResults.length > 0 && (
-        <div>
-          <p style={{ fontSize: 13, color: "#6c7086", margin: "0 0 8px" }}>Test Cases</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {result.caseResults.map((c) => (
-              <span
-                key={c.caseId}
-                style={{
-                  padding: "4px 12px",
-                  borderRadius: 999,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  border: "1px solid #313244",
-                  color: c.passed ? "#a6e3a1" : "#f38ba8",
-                  backgroundColor: "#181825",
-                }}
-              >
-                Case {c.caseId}: {c.passed ? "✓" : "✗"}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      {cases.length > 0 && (
+        <>
+          <CaseTabs cases={cases} activeIdx={activeCaseIdx} onSelect={setActiveCaseIdx} />
 
-      {/* First failing case diff */}
-      {result.caseResults.some((c) => !c.passed) && (
-        <div>
-          {result.caseResults
-            .filter((c) => !c.passed)
-            .slice(0, 1)
-            .map((c) => (
-              <div key={c.caseId} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <p style={{ fontSize: 13, color: "#6c7086", margin: 0 }}>
-                  Case {c.caseId} — Expected vs Actual
-                </p>
-                <pre
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 6,
-                    backgroundColor: "#181825",
-                    border: "1px solid #313244",
-                    color: "#cdd6f4",
-                    fontSize: 14,
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    lineHeight: 1.6,
-                    ...monoStyle,
-                  }}
-                >
-                  {`Expected: ${c.expectedOutput}\nActual:   ${c.actualOutput || "(empty)"}`}
-                </pre>
-              </div>
-            ))}
-        </div>
-      )}
-
-      {/* Runtime + memory stats */}
-      {result.time && (
-        <div style={{ display: "flex", gap: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <Clock size={13} style={{ color: "#6c7086" }} />
-            <div>
-              <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Runtime</p>
-              <p style={{ fontSize: 15, fontWeight: 600, color: "#cdd6f4", margin: 0 }}>
-                {result.time} s
-              </p>
+          {activeCase && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {activeCase.expectedOutput && (
+                <CodeBox label="Expected Output" value={activeCase.expectedOutput} color="#a6e3a1" />
+              )}
+              <CodeBox
+                label="Your Output"
+                value={activeCase.actualOutput || "(empty)"}
+                color={activeCase.passed ? "#a6e3a1" : "#f38ba8"}
+              />
+              {activeCase.stdout && activeCase.stdout.trim() && (
+                <CodeBox label="Stdout" value={activeCase.stdout} color="#89b4fa" />
+              )}
+              {(activeCase.compileOutput || activeCase.stderr) && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <AlertTriangle size={13} style={{ color: "#f38ba8" }} />
+                    <span style={{ fontSize: 13, color: "#f38ba8" }}>
+                      {activeCase.compileOutput ? "Compile Error" : "Runtime Error"}
+                    </span>
+                  </div>
+                  <CodeBox label="" value={activeCase.compileOutput ?? activeCase.stderr ?? ""} color="#f38ba8" />
+                </div>
+              )}
             </div>
+          )}
+        </>
+      )}
+
+      {/* Runtime + memory */}
+      {result.time && (
+        <div style={{ display: "flex", gap: 20, marginTop: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Clock size={12} style={{ color: "#6c7086" }} />
+            <span style={{ fontSize: 12, color: "#a6adc8" }}>{result.time} s</span>
           </div>
           {result.memory && (
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Cpu size={13} style={{ color: "#6c7086" }} />
-              <div>
-                <p style={{ fontSize: 11, color: "#6c7086", margin: "0 0 1px" }}>Memory</p>
-                <p style={{ fontSize: 15, fontWeight: 600, color: "#cdd6f4", margin: 0 }}>
-                  {result.memory} KB
-                </p>
-              </div>
+              <Cpu size={12} style={{ color: "#6c7086" }} />
+              <span style={{ fontSize: 12, color: "#a6adc8" }}>{result.memory} KB</span>
             </div>
           )}
         </div>
       )}
-
-      {/* Compile / runtime error output */}
-      {(result.compileOutput || result.stderr) && (
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-            <AlertTriangle size={13} style={{ color: "#f38ba8" }} />
-            <p style={{ fontSize: 13, color: "#f38ba8", margin: 0 }}>
-              {result.compileOutput ? "Compile Error" : "Runtime Error"}
-            </p>
-          </div>
-          <pre
-            style={{
-              padding: "10px 14px",
-              borderRadius: 6,
-              backgroundColor: "#181825",
-              border: "1px solid rgba(243,139,168,0.3)",
-              color: "#f38ba8",
-              fontSize: 14,
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-              lineHeight: 1.6,
-              ...monoStyle,
-            }}
-          >
-            {result.compileOutput || result.stderr}
-          </pre>
-        </div>
-      )}
-
-      {/* Void to silence unused */}
-      {isAccepted && null}
     </div>
   );
 }
@@ -505,7 +498,6 @@ function Judge0Result({ result }: { result: ExecuteResult }) {
 // ── Main export ────────────────────────────────────────────────────────────────
 
 export function ResultTab({ isRunning, isSubmitting, result }: ResultTabProps) {
-  // Loading state
   if (isRunning || isSubmitting) {
     return (
       <div
@@ -520,22 +512,21 @@ export function ResultTab({ isRunning, isSubmitting, result }: ResultTabProps) {
       >
         <div
           style={{
-            width: 28,
-            height: 28,
+            width: 26,
+            height: 26,
             border: "3px solid #313244",
             borderTopColor: "#89b4fa",
             borderRadius: "50%",
             animation: "spin 0.8s linear infinite",
           }}
         />
-        <p style={{ color: "#6c7086", fontSize: 14, margin: 0 }}>
+        <p style={{ color: "#6c7086", fontSize: 13, margin: 0 }}>
           {isRunning ? "Running code…" : "Submitting…"}
         </p>
       </div>
     );
   }
 
-  // Empty state
   if (!result) {
     return (
       <div
@@ -545,7 +536,7 @@ export function ResultTab({ isRunning, isSubmitting, result }: ResultTabProps) {
           justifyContent: "center",
           padding: "40px 0",
           color: "#45475a",
-          fontSize: 14,
+          fontSize: 13,
         }}
       >
         Run your code to see results here.
@@ -553,12 +544,10 @@ export function ResultTab({ isRunning, isSubmitting, result }: ResultTabProps) {
     );
   }
 
-  // Route to the correct result renderer
   if (result.provider === "leetcode") {
     if (result.mode === "submit") return <LCSubmitResult result={result} />;
     return <LCRunResult result={result} />;
   }
 
-  // Default: Judge0
   return <Judge0Result result={result} />;
 }

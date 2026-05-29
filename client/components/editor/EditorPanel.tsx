@@ -202,6 +202,7 @@ export function EditorPanel({
             // - an array of strings (multiple cases)
             const rawCodeOut = payload.code_output;
             const rawExpOut  = payload.expected_output;
+            const rawStdOut  = payload.std_output;
 
             const allCodeOutputs: string[] = Array.isArray(rawCodeOut)
               ? (rawCodeOut as string[])
@@ -209,6 +210,10 @@ export function EditorPanel({
             const allExpectedOutputs: string[] = Array.isArray(rawExpOut)
               ? (rawExpOut as string[])
               : (typeof rawExpOut === "string" && rawExpOut ? rawExpOut.split("\n") : []);
+            // std_output per case (console.log / print output)
+            const allStdOutputs: string[] = Array.isArray(rawStdOut)
+              ? (rawStdOut as string[])
+              : (typeof rawStdOut === "string" && rawStdOut ? rawStdOut.split("\n") : []);
 
             // Build per-case results using compare_result bits
             const runCaseResults: CaseResult[] = allInputs.map((_, i) => {
@@ -218,7 +223,7 @@ export function EditorPanel({
                 passed,
                 expectedOutput: allExpectedOutputs[i] ?? "",
                 actualOutput:   allCodeOutputs[i] ?? "",
-                stdout:         stdOutput,
+                stdout:         allStdOutputs[i] ?? stdOutput,   // per-case stdout
                 stderr:         runtimeErr,
                 compileOutput:  compileErr,
                 status:         null,
@@ -274,6 +279,9 @@ export function EditorPanel({
             lastTestcase:      (payload.last_testcase as string | undefined),
             expectedOutput:    (payload.expected_output as string | undefined),
             codeOutput:        (payload.code_output as string | undefined),
+            submissionId:      (payload.submission_id as number | undefined),
+            runtimeDistribution: (payload.runtime_distribution as Array<[number, number]> | undefined),
+            memoryDistribution:  (payload.memory_distribution as Array<[number, number]> | undefined),
           };
         }
 

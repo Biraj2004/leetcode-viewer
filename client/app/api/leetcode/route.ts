@@ -347,10 +347,81 @@ export async function POST(request: NextRequest): Promise<Response> {
       const statusCode = data.status_code ?? 11;
       const statusMsg = LC_STATUS[statusCode] ?? data.status_msg ?? "Unknown";
 
+      // ── Enrich with GraphQL submissionDetails (gets distribution data) ──
+      let runtimeDistribution: Array<[number, number]> | undefined;
+      let memoryDistribution: Array<[number, number]> | undefined;
+
+      try {
+        const gqlQuery = `query submissionDetails($submissionId: Int!) {
+          submissionDetails(submissionId: $submissionId) {
+            runtimeDistribution
+            memoryDistribution
+          }
+        }`;
+
+        const gqlHeaders = {
+          ...headers,
+          "Content-Type": "application/json",
+        };
+
+        const gqlRes = await fetch(`${LC_BASE}/graphql/`, {
+          method: "POST",
+          headers: gqlHeaders,
+          body: JSON.stringify({
+            query: gqlQuery,
+            variables: { submissionId: submitJson.submission_id },
+            operationName: "submissionDetails",
+          }),
+        });
+
+        if (gqlRes.ok) {
+          const gqlData = await gqlRes.json() as {
+            data?: {
+              submissionDetails?: {
+                runtimeDistribution?: string;
+                memoryDistribution?: string;
+              };
+            };
+            errors?: unknown[];
+          };
+
+          console.log("[LC API] GraphQL raw response:", JSON.stringify(gqlData).slice(0, 500));
+
+          const sd = gqlData?.data?.submissionDetails;
+          if (sd?.runtimeDistribution) {
+            try {
+              // LC returns this as a JSON string of {distribution: [[ms, pct], ...]}
+              const parsed = JSON.parse(sd.runtimeDistribution);
+              runtimeDistribution = Array.isArray(parsed)
+                ? parsed
+                : (parsed?.distribution ?? []);
+            } catch { /* skip */ }
+          }
+          if (sd?.memoryDistribution) {
+            try {
+              const parsed = JSON.parse(sd.memoryDistribution);
+              memoryDistribution = Array.isArray(parsed)
+                ? parsed
+                : (parsed?.distribution ?? []);
+            } catch { /* skip */ }
+          }
+          console.log(`[LC API] GraphQL submissionDetails → runtime points: ${runtimeDistribution?.length ?? 0}, memory points: ${memoryDistribution?.length ?? 0}`);
+          if (gqlData?.errors) {
+            console.warn("[LC API] GraphQL errors:", gqlData.errors);
+          }
+        } else {
+          const text = await gqlRes.text();
+          console.warn(`[LC API] GraphQL HTTP ${gqlRes.status}:`, text.slice(0, 300));
+        }
+      } catch (gqlErr) {
+        console.warn("[LC API] GraphQL submissionDetails failed (non-critical):", gqlErr);
+      }
+
       return Response.json({
         provider: "leetcode",
         mode: "submit",
         status: { id: statusCode, description: statusMsg },
+        submission_id: submitJson.submission_id,
         run_success: data.run_success,
         total_correct: data.total_correct,
         total_testcases: data.total_testcases,
@@ -365,6 +436,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         compile_error: data.compile_error,
         full_compile_error: data.full_compile_error,
         runtime_error: data.runtime_error,
+        runtime_distribution: runtimeDistribution,
+        memory_distribution: memoryDistribution,
       });
     }
 

@@ -51,6 +51,10 @@ export interface ExecuteResult {
   allCodeOutputs?: string[];   // one entry per test case
   allExpectedOutputs?: string[]; // one entry per test case
   allInputs?: string[];        // the raw data_input strings sent (one per case)
+  // Distribution chart data (from GraphQL submissionDetails, submit mode only)
+  runtimeDistribution?: Array<[number, number]>;  // [runtime_ms, percentage]
+  memoryDistribution?: Array<[number, number]>;   // [memory_kb, percentage]
+  submissionId?: number;
 }
 
 // Ref handle exposed by EditorPanel to the parent page

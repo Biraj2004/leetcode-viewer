@@ -48,11 +48,12 @@ export function TestCaseTab({
 
   function handleAddCase() {
     if (!draftInput.trim()) { setIsAdding(false); return; }
-    onCustomTestCasesChange([...customTestCases, draftInput.trim()]);
+    const newCases = [...customTestCases, draftInput.trim()];
+    onCustomTestCasesChange(newCases);
     setDraftInput("");
     setIsAdding(false);
-    // Select the new case
-    onSelectCase(totalCases);
+    // Select the newly added case
+    onSelectCase(exampleTestcaseList.length + newCases.length - 1);
   }
 
   function handleDeleteCustom(customIdx: number) {
