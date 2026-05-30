@@ -6,7 +6,7 @@
  * Shows logo, problem prev/next nav, timer, run/submit, settings.
  */
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   List,
   ChevronLeft,
@@ -23,6 +23,9 @@ import {
   X,
   Cpu,
   Zap,
+  Puzzle,
+  RefreshCw,
+  Trash2,
 } from "lucide-react";
 import { DifficultyBadge } from "../ui/Badge";
 import type { ParsedProblem } from "../../types/ui";
@@ -30,6 +33,7 @@ import type { ParsedProblem } from "../../types/ui";
 // ─── Settings modal ───────────────────────────────────────────────────────────
 
 type Provider = "judge0" | "leetcode";
+
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const [provider, setProvider] = useState<Provider>(() =>
@@ -46,12 +50,96 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [showSession, setShowSession] = useState(false);
   const [showCsrf, setShowCsrf] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [extStatus, setExtStatus] = useState<"unknown"|"found"|"missing">("unknown");
+  const [fetchStatus, setFetchStatus] = useState<"idle"|"fetching"|"done"|"error">("idle");
+  const [fetchMsg, setFetchMsg] = useState("");
+
+  // Detect extension on mount via window.postMessage
+  useEffect(() => {
+    let pingInterval: ReturnType<typeof setInterval>;
+    let found = false;
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const msg = event.data;
+      if (!msg || typeof msg !== "object") return;
+
+      if (msg.type === "LV_EXT_PONG") {
+        found = true;
+        setExtStatus("found");
+        clearInterval(pingInterval);
+      }
+
+      if (msg.type === "LV_EXT_RESP_FETCH") {
+        const resp = msg.data;
+        if (resp?.success && resp?.session && resp?.csrf) {
+          setSession(resp.session);
+          setCsrf(resp.csrf);
+          setFetchStatus("done");
+          setFetchMsg("✓ Tokens fetched! Click Save to apply.");
+        } else {
+          setFetchStatus("error");
+          setFetchMsg(resp?.error ?? msg.error ?? "Unknown error");
+        }
+      }
+
+      if (msg.type === "LV_EXT_RESP_CLEAR") {
+        // Clear finished in background
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+
+    // Ping immediately
+    window.postMessage({ type: "LV_EXT_PING" }, "*");
+
+    // Ping every 100ms
+    pingInterval = setInterval(() => {
+      window.postMessage({ type: "LV_EXT_PING" }, "*");
+    }, 100);
+
+    // Timeout
+    const timeout = setTimeout(() => {
+      if (!found) {
+        clearInterval(pingInterval);
+        setExtStatus("missing");
+      }
+    }, 3000);
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      clearInterval(pingInterval);
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  const handleExtFetch = useCallback(() => {
+    setFetchStatus("fetching");
+    setFetchMsg("Contacting extension…");
+    window.postMessage({ type: "LV_EXT_REQ_FETCH" }, "*");
+  }, []);
+
+  const handleClearTokens = useCallback(() => {
+    setSession(""); 
+    setCsrf("");
+    setFetchMsg("Tokens cleared. Click Save to apply changes.");
+  }, []);
 
   function handleSave() {
     localStorage.setItem("lv_provider", provider);
     if (provider === "leetcode") {
-      localStorage.setItem("lv_lc_session", session.trim());
-      localStorage.setItem("lv_lc_csrf", csrf.trim());
+      const cleanSession = session.trim();
+      const cleanCsrf = csrf.trim();
+      if (cleanSession) {
+        localStorage.setItem("lv_lc_session", cleanSession);
+      } else {
+        localStorage.removeItem("lv_lc_session");
+      }
+      if (cleanCsrf) {
+        localStorage.setItem("lv_lc_csrf", cleanCsrf);
+      } else {
+        localStorage.removeItem("lv_lc_csrf");
+      }
     }
     setSaved(true);
     setTimeout(() => { setSaved(false); onClose(); }, 800);
@@ -80,6 +168,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           backgroundColor: "rgba(0,0,0,0.6)",
           backdropFilter: "blur(4px)",
           zIndex: 50,
+          animation: "backdropFadeIn 0.2s ease-out forwards",
         }}
       />
 
@@ -98,6 +187,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
+          animation: "modalFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards",
         }}
       >
         {/* Header */}
@@ -155,66 +245,127 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           {/* LeetCode credentials — only shown when LC selected */}
           {provider === "leetcode" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{
-                padding: "10px 14px",
-                borderRadius: 8,
-                backgroundColor: "rgba(249,226,175,0.06)",
-                border: "1px solid rgba(249,226,175,0.2)",
-              }}>
-                <p style={{ margin: 0, fontSize: 11, color: "#f9e2af", lineHeight: 1.5 }}>
-                  Open <strong>leetcode.com</strong> → DevTools → Application → Cookies.<br />
-                  Copy <code>LEETCODE_SESSION</code> and <code>csrftoken</code> values.
-                </p>
+
+              {/* ── Extension section ── */}
+              <div style={{ borderRadius: 8, border: "1px solid #313244", overflow: "hidden" }}>
+                <div style={{ padding: "10px 14px", background: "#181825", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <Puzzle size={14} style={{ color: extStatus === "found" ? "#a6e3a1" : "#6c7086" }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#cdd6f4" }}>Browser Extension</span>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
+                    background: extStatus === "found" ? "rgba(166,227,161,0.15)" : "rgba(243,139,168,0.12)",
+                    color: extStatus === "found" ? "#a6e3a1" : "#f38ba8",
+                    border: extStatus === "found" ? "1px solid rgba(166,227,161,0.3)" : "1px solid rgba(243,139,168,0.25)"
+                  }}>
+                    {extStatus === "found" ? "Detected" : extStatus === "missing" ? "Not found" : "Checking…"}
+                  </span>
+                </div>
+                <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {extStatus !== "found" && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <a
+                          href="https://github.com/Biraj2004/leetcode-viewer/releases/download/ex-1.0.0/extension.zip"
+                          download
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#89b4fa",
+                            textDecoration: "none", padding: "6px 10px", borderRadius: 6,
+                            background: "rgba(137,180,250,0.1)", border: "1px solid rgba(137,180,250,0.2)" }}
+                        >
+                          <Puzzle size={12} /> Download ZIP
+                        </a>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText("chrome://extensions/");
+                            const btn = document.getElementById("copy-ext-btn");
+                            if (btn) {
+                              const oldText = btn.innerText;
+                              btn.innerText = "Copied!";
+                              setTimeout(() => { btn.innerText = oldText; }, 2000);
+                            }
+                          }}
+                          id="copy-ext-btn"
+                          style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#a6adc8",
+                            padding: "6px 10px", borderRadius: 6, border: "1px solid #313244", background: "#181825", cursor: "pointer" }}
+                        >
+                          Copy chrome://extensions
+                        </button>
+                      </div>
+                      <p style={{ margin: 0, fontSize: 10, color: "#a6adc8", lineHeight: 1.4 }}>
+                        * Browsers block direct redirects to internal pages. Download the ZIP, copy the URL above, paste it in a new tab, enable Developer Mode, and click <strong>Load Unpacked</strong>. <em>(If using Incognito, also toggle <strong>Allow in incognito</strong> in the extension details).</em>
+                      </p>
+                    </div>
+                  )}
+                  <button
+                    onClick={handleExtFetch}
+                    disabled={extStatus !== "found" || fetchStatus === "fetching"}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                      padding: "7px 12px", borderRadius: 6, border: "none", cursor: extStatus === "found" ? "pointer" : "not-allowed",
+                      background: extStatus === "found" ? "#ffa116" : "#313244",
+                      color: extStatus === "found" ? "#1e1e2e" : "#45475a",
+                      fontWeight: 600, fontSize: 12, opacity: fetchStatus === "fetching" ? 0.6 : 1
+                    }}
+                  >
+                    <RefreshCw size={12} style={{ animation: fetchStatus === "fetching" ? "spin 1s linear infinite" : "none" }} />
+                    {fetchStatus === "fetching" ? "Fetching…" : "Auto-Fetch via Extension"}
+                  </button>
+                  {fetchMsg && (
+                    <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4,
+                      color: fetchStatus === "error" ? "#f38ba8" : "#a6e3a1" }}>
+                      {fetchMsg}
+                    </p>
+                  )}
+                </div>
               </div>
 
-              {/* LEETCODE_SESSION */}
+              {/* ── Manual fields ── */}
               <div>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6c7086", marginBottom: 6, fontFamily: "'Fira Code', monospace" }}>LEETCODE_SESSION</label>
                 <div style={{ position: "relative" }}>
-                  <input
-                    type={showSession ? "text" : "password"}
-                    value={session}
+                  <input type={showSession ? "text" : "password"} value={session}
                     onChange={(e) => setSession(e.target.value)}
                     placeholder="Paste your LEETCODE_SESSION cookie value…"
                     style={{ ...inputStyle, paddingRight: 36 }}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowSession((v) => !v)}
-                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex" }}
-                  >
+                  <button type="button" onClick={() => setShowSession((v) => !v)}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex" }}>
                     {showSession ? <EyeOff size={13} /> : <Eye size={13} />}
                   </button>
                 </div>
               </div>
 
-              {/* csrftoken */}
               <div>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6c7086", marginBottom: 6, fontFamily: "'Fira Code', monospace" }}>csrftoken</label>
                 <div style={{ position: "relative" }}>
-                  <input
-                    type={showCsrf ? "text" : "password"}
-                    value={csrf}
+                  <input type={showCsrf ? "text" : "password"} value={csrf}
                     onChange={(e) => setCsrf(e.target.value)}
                     placeholder="Paste your csrftoken cookie value…"
                     style={{ ...inputStyle, paddingRight: 36 }}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowCsrf((v) => !v)}
-                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex" }}
-                  >
+                  <button type="button" onClick={() => setShowCsrf((v) => !v)}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#6c7086", display:"flex" }}>
                     {showCsrf ? <EyeOff size={13} /> : <Eye size={13} />}
                   </button>
                 </div>
               </div>
 
-              {session && csrf && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#a6e3a1" }} />
-                  <span style={{ fontSize: 11, color: "#a6e3a1" }}>Credentials configured</span>
-                </div>
-              )}
+              {/* ── Status + Clear ── */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                {session && csrf ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#a6e3a1" }} />
+                    <span style={{ fontSize: 11, color: "#a6e3a1" }}>Credentials configured</span>
+                  </div>
+                ) : <div />}
+                {(session || csrf) && (
+                  <button onClick={handleClearTokens}
+                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 6,
+                      background: "rgba(243,139,168,0.1)", border: "1px solid rgba(243,139,168,0.25)",
+                      color: "#f38ba8", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                    <Trash2 size={11} /> Clear Tokens
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

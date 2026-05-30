@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Leetcode Viewer Authenticator",
+  "version": "1.0.0",
+  "description": "Securely fetches your LeetCode session tokens for Leetcode Viewer.",
+  "incognito": "split",
+
+  "permissions": [
+    "cookies",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://leetcode.com/*",
+    "http://localhost/*",
+    "https://*.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Leetcode Viewer Authenticator"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:*/*",
+      "https://*.vercel.app/*",
+      "https://leetcode-viewer.vercel.app/*"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://leetcode.com/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://*.vercel.app/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
