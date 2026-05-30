@@ -1,6 +1,6 @@
-// Types for code execution — shared between Judge0 and LeetCode providers
+// Types for code execution (LeetCode provider)
 
-export interface Judge0Status {
+export interface ExecutionStatus {
   id: number;
   description: string;
 }
@@ -14,7 +14,7 @@ export interface CaseResult {
   stdout: string | null;
   stderr: string | null;
   compileOutput: string | null;
-  status: Judge0Status | null;
+  status: ExecutionStatus | null;
   time: string | null;
   memory: number | null;
 }
@@ -22,7 +22,7 @@ export interface CaseResult {
 // Aggregated result returned to the UI after run/submit
 export interface ExecuteResult {
   mode: "run" | "submit";
-  status: Judge0Status;
+  status: ExecutionStatus;
   caseResults: CaseResult[];
   passedCount: number;
   totalCases: number;
@@ -34,7 +34,7 @@ export interface ExecuteResult {
   memory: number | null;
 
   // ── LeetCode-specific ────────────────────────────────────────────────────
-  provider?: "judge0" | "leetcode";
+  provider?: "leetcode";
   // Submission stats (submit mode, Accepted)
   runtimePercentile?: number;
   memoryPercentile?: number;

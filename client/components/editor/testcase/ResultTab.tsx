@@ -4,7 +4,6 @@
  * Shows execution results:
  * - LC run  → tab per case (Case 1 / Case 2 / …) + detail panel with Input/Expected/Output/Stdout
  * - LC submit → percentile bars + distribution chart (bar chart from runtimeDistribution)
- * - Judge0   → same tab-per-case layout
  */
 
 "use client";
@@ -311,71 +310,6 @@ function LCSubmitResult({ result }: { result: ExecuteResult }) {
   );
 }
 
-// ── Judge0 result ─────────────────────────────────────────────────────────────
-
-function Judge0Result({ result }: { result: ExecuteResult }) {
-  const [activeCaseIdx, setActiveCaseIdx] = useState(0);
-  const cases = result.caseResults;
-  const activeCase = cases[activeCaseIdx];
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <StatusBadge result={result} />
-
-      {cases.length > 0 && (
-        <>
-          <CaseTabs cases={cases} activeIdx={activeCaseIdx} onSelect={setActiveCaseIdx} />
-
-          {activeCase && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {activeCase.expectedOutput && (
-                <CodeBox label="Expected Output" value={activeCase.expectedOutput} color="#a6e3a1" />
-              )}
-              <CodeBox
-                label="Your Output"
-                value={activeCase.actualOutput || "(empty)"}
-                color={activeCase.passed ? "#a6e3a1" : "#f38ba8"}
-              />
-              {activeCase.stdout && activeCase.stdout.trim() && (
-                <CodeBox label="Stdout" value={activeCase.stdout} color="#89b4fa" />
-              )}
-              {(activeCase.compileOutput || activeCase.stderr) && (
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                    <AlertTriangle size={13} style={{ color: "#f38ba8" }} />
-                    <span style={{ fontSize: 13, color: "#f38ba8" }}>
-                      {activeCase.compileOutput ? "Compile Error" : "Runtime Error"}
-                    </span>
-                  </div>
-                  <CodeBox label="" value={activeCase.compileOutput ?? activeCase.stderr ?? ""} color="#f38ba8" />
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Runtime + memory */}
-      {result.time && (
-        <div style={{ display: "flex", gap: 20, marginTop: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <Clock size={12} style={{ color: "#6c7086" }} />
-            <span style={{ fontSize: 12, color: "#a6adc8" }}>{result.time} s</span>
-          </div>
-          {result.memory && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Cpu size={12} style={{ color: "#6c7086" }} />
-              <span style={{ fontSize: 12, color: "#a6adc8" }}>{result.memory} KB</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main export ────────────────────────────────────────────────────────────────
-
 export function ResultTab({ isRunning, isSubmitting, result }: ResultTabProps) {
   if (isRunning || isSubmitting) {
     return (
@@ -423,10 +357,6 @@ export function ResultTab({ isRunning, isSubmitting, result }: ResultTabProps) {
     );
   }
 
-  if (result.provider === "leetcode") {
-    if (result.mode === "submit") return <LCSubmitResult result={result} />;
-    return <LCRunResult result={result} />;
-  }
-
-  return <Judge0Result result={result} />;
+  if (result.mode === "submit") return <LCSubmitResult result={result} />;
+  return <LCRunResult result={result} />;
 }

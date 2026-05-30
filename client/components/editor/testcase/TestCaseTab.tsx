@@ -4,8 +4,7 @@
  * TestCaseTab.tsx
  *
  * Shows test case inputs and allows adding custom test cases.
- * For the LeetCode provider, shows raw data_input; for Judge0 shows
- * structured inputs from parsed examples.
+ * Shows raw data_input from parsed examples.
  *
  * The "+" button opens an inline editor to add custom data_input cases.
  */
