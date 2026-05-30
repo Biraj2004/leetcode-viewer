@@ -35,7 +35,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [provider, setProvider] = useState<Provider>(() =>
     (typeof window !== "undefined"
       ? (localStorage.getItem("lv_provider") as Provider)
-      : null) ?? "judge0"
+      : null) ?? "leetcode"
   );
   const [session, setSession] = useState(() =>
     typeof window !== "undefined" ? (localStorage.getItem("lv_lc_session") ?? "") : ""
@@ -287,13 +287,13 @@ export function TopBar({
   const [isDrawerMounted, setIsDrawerMounted] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [activeProvider, setActiveProvider] = useState<Provider>("judge0");
+  const [activeProvider, setActiveProvider] = useState<Provider>("leetcode");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Sync provider badge from localStorage on mount and when settings close
   useEffect(() => {
     setActiveProvider(
-      (localStorage.getItem("lv_provider") as Provider) ?? "judge0"
+      (localStorage.getItem("lv_provider") as Provider) ?? "leetcode"
     );
   }, [isSettingsOpen]);
 

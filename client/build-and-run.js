@@ -166,9 +166,10 @@ function stepObfuscate() {
     process.exit(1);
   }
 
+  const tmpChunks = path.join(NEXT_DIR, 'static', 'chunks_tmp');
   const bulkCmd =
     `javascript-obfuscator "${CHUNKS_DIR}" ` +
-    `--output "${CHUNKS_DIR}" ` +
+    `--output "${tmpChunks}" ` +
     `--compact true ` +
     `--identifier-names-generator hexadecimal ` +
     `--string-array true ` +
@@ -176,7 +177,9 @@ function stepObfuscate() {
 
   console.log(`\n> ${bulkCmd}`);
   const bulk = spawnSync(bulkCmd, { shell: true, stdio: 'inherit', cwd: ROOT });
-  if (bulk.status === 0) {
+  if (bulk.status === 0 && fs.existsSync(tmpChunks)) {
+    fs.rmSync(CHUNKS_DIR, { recursive: true, force: true });
+    fs.renameSync(tmpChunks, CHUNKS_DIR);
     console.log('[+] Obfuscation complete.');
     return;
   }
@@ -209,7 +212,7 @@ function stepObfuscate() {
   let failedCount = 0;
 
   for (const file of jsFiles) {
-    const tmpOut = `${file}.obf.tmp`;
+    const tmpOut = `${file}.obf.js`;
     let obfuscated = false;
 
     for (const strategy of strategies) {
@@ -225,7 +228,7 @@ function stepObfuscate() {
         successCount++;
         break;
       }
-      if (fs.existsSync(tmpOut)) fs.rmSync(tmpOut, { force: true });
+      if (fs.existsSync(tmpOut)) fs.rmSync(tmpOut, { recursive: true, force: true });
     }
 
     if (!obfuscated) {

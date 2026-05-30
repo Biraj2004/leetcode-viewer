@@ -65,10 +65,10 @@ function normalizeForComparison(raw: string): string {
   }
 }
 
-/** Read provider preference from localStorage (defaults to "judge0") */
+/** Read provider preference from localStorage (defaults to "leetcode") */
 function getProvider(): "judge0" | "leetcode" {
-  if (typeof window === "undefined") return "judge0";
-  return (localStorage.getItem("lv_provider") as "judge0" | "leetcode") ?? "judge0";
+  if (typeof window === "undefined") return "leetcode";
+  return (localStorage.getItem("lv_provider") as "judge0" | "leetcode") ?? "leetcode";
 }
 
 /** Read LeetCode credentials from localStorage */
