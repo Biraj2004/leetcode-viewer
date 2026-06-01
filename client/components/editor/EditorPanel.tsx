@@ -1,16 +1,5 @@
 "use client";
 
-/**
- * EditorPanel.tsx
- *
- * The right panel — orchestrates the code editor, language selection,
- * syntax highlighting, and test case execution.
- *
- * Sends raw code to /api/leetcode (LeetCode's own judge).
- * LeetCode session credentials are read from localStorage and passed
- * server-side — they are never stored server-side.
- */
-
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { EditorToolbar } from "./EditorToolbar";
@@ -21,54 +10,20 @@ import type { ParsedProblem, LanguageKey } from "../../types/ui";
 import type { ExecuteResult, EditorHandle, CaseResult } from "../../types/execution";
 import { detectExtension, requestLeetCodeViaExtension } from "../../lib/extensionApi";
 
-// LeetCode language keys (same as our LanguageKey for the 5 we support)
 const LC_LANG_MAP: Record<LanguageKey, string> = {
   javascript: "javascript",
   typescript: "typescript",
-  python3:    "python3",
-  java:       "java",
-  cpp:        "cpp",
+  python3: "python3",
+  java: "java",
+  cpp: "cpp",
 };
 
 interface EditorPanelProps {
   problem: ParsedProblem;
   editorRef: React.RefObject<EditorHandle | null>;
-  onRun: () => void;
-  onSubmit: () => void;
   isRunning: boolean;
   isSubmitting: boolean;
   result: ExecuteResult | null;
-}
-
-function normalizeOutput(text: string | null | undefined): string {
-  return String(text ?? "").replace(/\r\n/g, "\n").trim();
-}
-
-/**
- * Normalize a value for comparison by parsing it as JSON if possible,
- * then re-serializing with no spaces. This handles:
- * - "[0,1]" vs "[0, 1]"
- * - "[[1,2],[3,4]]" vs "[[1, 2], [3, 4]]"
- * - "true" vs "True" (Python)
- * Falls back to trimmed string comparison if JSON.parse fails.
- */
-function normalizeForComparison(raw: string): string {
-  const trimmed = raw.trim();
-  try {
-    return JSON.stringify(JSON.parse(trimmed));
-  } catch {
-    return trimmed.toLowerCase();
-  }
-}
-
-
-/** Read LeetCode credentials from localStorage */
-function getLCCredentials(): { leetcodeSession: string; csrfToken: string } {
-  if (typeof window === "undefined") return { leetcodeSession: "", csrfToken: "" };
-  return {
-    leetcodeSession: localStorage.getItem("lv_lc_session") ?? "",
-    csrfToken:       localStorage.getItem("lv_lc_csrf")    ?? "",
-  };
 }
 
 export function EditorPanel({
@@ -80,17 +35,12 @@ export function EditorPanel({
 }: EditorPanelProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Default to first supported language
   const defaultLang = (problem.languages[0]?.value ?? "javascript") as LanguageKey;
-
   const [language, setLanguage] = useState<LanguageKey>(defaultLang);
   const [code, setCode] = useState<string>(problem.codeTemplates[defaultLang] ?? "");
   const [activeTestCaseIndex, setActiveTestCaseIndex] = useState(0);
-
-  // Custom test cases added by the user (LeetCode data_input format)
   const [customTestCases, setCustomTestCases] = useState<string[]>([]);
 
-  // Switch language — reset code to the template for that language
   const handleLanguageChange = useCallback(
     (lang: LanguageKey) => {
       setLanguage(lang);
@@ -99,154 +49,74 @@ export function EditorPanel({
     [problem.codeTemplates],
   );
 
-  // Reset code to the default template
   const handleReset = useCallback(() => {
     setCode(problem.codeTemplates[language] ?? "");
   }, [problem.codeTemplates, language]);
 
-  // Expose execute() to the parent page via ref
   useEffect(() => {
     if (!editorRef) return;
 
-    // Also expose _lang and _code so the parent can read them when saving submissions
     (editorRef as unknown as { current: { _lang?: string; _code?: string; execute: unknown } }).current = {
       _lang: language,
       _code: code,
       execute: async ({ mode = "run" }: { mode?: "run" | "submit" } = {}): Promise<ExecuteResult> => {
-        const { leetcodeSession, csrfToken } = getLCCredentials();
         const lcLang = LC_LANG_MAP[language];
         if (!lcLang) throw new Error(`Unsupported language for LeetCode: ${language}`);
 
-        // For run: use the active test case data_input
-        // Prefer exampleTestcaseList from the problem JSON (raw LC format),
-        // with custom test cases appended.
         const allInputs = [...(problem.exampleTestcaseList ?? []), ...customTestCases];
-
         let dataInput: string | undefined;
         if (mode === "run") {
-          // Send ALL test cases at once (joined by \n).
-          // LC interprets_solution supports multiple cases in one call.
           dataInput = allInputs.join("\n");
         }
-        // Submit: dataInput is undefined — LC uses its own full test suite
+
+        const extAvailable = await detectExtension(2, 200, 450);
+        if (!extAvailable) {
+          const message = "Extension not detected. Please install/enable the extension and login on leetcode.com.";
+          toast.error(message);
+          throw new Error(message);
+        }
 
         let payload: Record<string, unknown>;
-        const extAvailable = await detectExtension(2, 200, 450);
-
-        if (extAvailable) {
-          try {
-            const extPayload = await requestLeetCodeViaExtension({
-              mode,
-              titleSlug: problem.titleSlug,
-              questionId: problem.questionId,
-              lang: lcLang,
-              typedCode: code,
-              dataInput,
-            }, 90000);
-            payload = extPayload as Record<string, unknown>;
-          } catch (error) {
-            const errObj = error as Error & { code?: string };
-            const errCode = errObj.code;
-            const message = errObj.message || "Extension request failed.";
-
-            if (errCode === "SESSION_EXPIRED" || errCode === "MISSING_SESSION") {
-              toast.error(message);
-              throw new Error(message);
-            }
-            if (errCode === "RATE_LIMITED" || errCode === "TIMEOUT") {
-              toast.warning(message);
-              throw new Error(message);
-            }
-
-            // Bridge-level failure: fallback to existing server route.
-            const response = await fetch("/api/leetcode", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                mode,
-                titleSlug: problem.titleSlug,
-                questionId: problem.questionId,
-                style: undefined,
-                lang: lcLang,
-                typedCode: code,
-                dataInput,
-                leetcodeSession,
-                csrfToken,
-              }),
-            });
-
-            payload = await response.json() as Record<string, unknown>;
-
-            if (!response.ok) {
-              const serverErrCode = payload.error as string | undefined;
-              const serverMessage = (payload.message as string | undefined) ?? "LeetCode request failed.";
-
-              if (serverErrCode === "SESSION_EXPIRED" || serverErrCode === "MISSING_SESSION") {
-                toast.error(serverMessage);
-                throw new Error(serverMessage);
-              }
-              if (serverErrCode === "RATE_LIMITED" || serverErrCode === "TIMEOUT") {
-                toast.warning(serverMessage);
-                throw new Error(serverMessage);
-              }
-              toast.error(serverMessage);
-              throw new Error(serverMessage);
-            }
-          }
-        } else {
-          const response = await fetch("/api/leetcode", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              mode,
-              titleSlug: problem.titleSlug,
-              questionId: problem.questionId,
-              style: undefined,
-              lang: lcLang,
-              typedCode: code,
-              dataInput,
-              leetcodeSession,
-              csrfToken,
-            }),
-          });
-
-          payload = await response.json() as Record<string, unknown>;
-
-          if (!response.ok) {
-            const errCode = payload.error as string | undefined;
-            const message = (payload.message as string | undefined) ?? "LeetCode request failed.";
-
-            if (errCode === "SESSION_EXPIRED" || errCode === "MISSING_SESSION") {
-              toast.error(message);
-              throw new Error(message);
-            }
-            if (errCode === "RATE_LIMITED" || errCode === "TIMEOUT") {
-              toast.warning(message);
-              throw new Error(message);
-            }
+        try {
+          const extPayload = await requestLeetCodeViaExtension({
+            mode,
+            titleSlug: problem.titleSlug,
+            questionId: problem.questionId,
+            lang: lcLang,
+            typedCode: code,
+            dataInput,
+          }, 90000);
+          payload = extPayload as Record<string, unknown>;
+        } catch (error) {
+          const errObj = error as Error & { code?: string };
+          const errCode = errObj.code;
+          const message = errObj.message || "Extension request failed.";
+          if (errCode === "SESSION_EXPIRED" || errCode === "MISSING_SESSION") {
             toast.error(message);
             throw new Error(message);
           }
+          if (errCode === "RATE_LIMITED" || errCode === "TIMEOUT") {
+            toast.warning(message);
+            throw new Error(message);
+          }
+          toast.error(message);
+          throw new Error(message);
         }
 
-        // ── Map LC response → ExecuteResult ───────────────────────────
-        const statusId   = (payload.status as { id?: number } | undefined)?.id ?? 11;
+        const statusId = (payload.status as { id?: number } | undefined)?.id ?? 11;
         const statusDesc = (payload.status as { description?: string } | undefined)?.description ?? "Unknown";
 
         if (mode === "run") {
-          const compareStr  = (payload.compare_result as string | undefined) ?? "";
-          const compileErr  = (payload.full_compile_error as string | undefined)
+          const compareStr = (payload.compare_result as string | undefined) ?? "";
+          const compileErr = (payload.full_compile_error as string | undefined)
             ?? (payload.compile_error as string | undefined) ?? null;
-          const runtimeErr  = (payload.runtime_error as string | undefined) ?? null;
-          const stdOutput   = (payload.std_output as string | undefined) ?? null;
+          const runtimeErr = (payload.runtime_error as string | undefined) ?? null;
+          const stdOutput = (payload.std_output as string | undefined) ?? null;
           const lastTestcase = (payload.last_testcase as string | undefined) ?? null;
 
-          // LC returns code_output and expected_output as either:
-          // - a newline-delimited string (single case)
-          // - an array of strings (multiple cases)
           const rawCodeOut = payload.code_output;
-          const rawExpOut  = payload.expected_output;
-          const rawStdOut  = payload.std_output;
+          const rawExpOut = payload.expected_output;
+          const rawStdOut = payload.std_output;
 
           const allCodeOutputs: string[] = Array.isArray(rawCodeOut)
             ? (rawCodeOut as string[])
@@ -254,80 +124,74 @@ export function EditorPanel({
           const allExpectedOutputs: string[] = Array.isArray(rawExpOut)
             ? (rawExpOut as string[])
             : (typeof rawExpOut === "string" && rawExpOut ? rawExpOut.split("\n") : []);
-          // std_output per case (console.log / print output)
           const allStdOutputs: string[] = Array.isArray(rawStdOut)
             ? (rawStdOut as string[])
             : (typeof rawStdOut === "string" && rawStdOut ? rawStdOut.split("\n") : []);
 
-          // Build per-case results using compare_result bits
-          const runCaseResults: CaseResult[] = allInputs.map((_, i) => {
-            const passed = compareStr[i] === "1";
-            return {
-              caseId:         i + 1,
-              passed,
-              expectedOutput: allExpectedOutputs[i] ?? "",
-              actualOutput:   allCodeOutputs[i] ?? "",
-              stdout:         allStdOutputs[i] ?? stdOutput,   // per-case stdout
-              stderr:         runtimeErr,
-              compileOutput:  compileErr,
-              status:         null,
-              time:           null,
-              memory:         null,
-            };
-          });
+          const runCaseResults: CaseResult[] = allInputs.map((_, i) => ({
+            caseId: i + 1,
+            passed: compareStr[i] === "1",
+            expectedOutput: allExpectedOutputs[i] ?? "",
+            actualOutput: allCodeOutputs[i] ?? "",
+            stdout: allStdOutputs[i] ?? stdOutput,
+            stderr: runtimeErr,
+            compileOutput: compileErr,
+            status: null,
+            time: null,
+            memory: null,
+          }));
 
-          const passed = runCaseResults.filter((c) => c.passed).length;
+          const passed = runCaseResults.filter((item) => item.passed).length;
           return {
             provider: "leetcode",
             mode: "run",
             status: { id: statusId, description: statusDesc },
             caseResults: runCaseResults,
             passedCount: passed,
-            totalCases:  runCaseResults.length,
-            stdout:      stdOutput,
-            stderr:      runtimeErr,
+            totalCases: runCaseResults.length,
+            stdout: stdOutput,
+            stderr: runtimeErr,
             compileOutput: compileErr,
             time: null,
             memory: null,
-            lastTestcase:   lastTestcase ?? undefined,
+            lastTestcase: lastTestcase ?? undefined,
             expectedOutput: allExpectedOutputs[0] ?? undefined,
-            codeOutput:     allCodeOutputs[0] ?? undefined,
+            codeOutput: allCodeOutputs[0] ?? undefined,
             allCodeOutputs,
             allExpectedOutputs,
             allInputs,
-            totalCorrect:   (payload.total_correct as number | undefined),
-            totalTestcases: (payload.total_testcases as number | undefined),
+            totalCorrect: payload.total_correct as number | undefined,
+            totalTestcases: payload.total_testcases as number | undefined,
           };
         }
 
-        // Submit mode
         return {
           provider: "leetcode",
           mode: "submit",
           status: { id: statusId, description: statusDesc },
           caseResults: [],
-          passedCount:  (payload.total_correct as number | undefined) ?? 0,
-          totalCases:   (payload.total_testcases as number | undefined) ?? 0,
-          stdout:  (payload.std_output as string | undefined) ?? null,
-          stderr:  (payload.runtime_error as string | undefined) ?? null,
+          passedCount: (payload.total_correct as number | undefined) ?? 0,
+          totalCases: (payload.total_testcases as number | undefined) ?? 0,
+          stdout: (payload.std_output as string | undefined) ?? null,
+          stderr: (payload.runtime_error as string | undefined) ?? null,
           compileOutput: (payload.full_compile_error as string | undefined)
             ?? (payload.compile_error as string | undefined) ?? null,
-          time:   null,
+          time: null,
           memory: null,
-          runtimePercentile: (payload.runtime_percentile as number | undefined),
-          memoryPercentile:  (payload.memory_percentile as number | undefined),
-          statusRuntime:     (payload.status_runtime as string | undefined),
-          statusMemory:      (payload.status_memory as string | undefined),
-          totalCorrect:      (payload.total_correct as number | undefined),
-          totalTestcases:    (payload.total_testcases as number | undefined),
-          lastTestcase:      (payload.last_testcase as string | undefined),
-          expectedOutput:    (payload.expected_output as string | undefined),
-          codeOutput:        (payload.code_output as string | undefined),
-          submissionId:      (payload.submission_id as number | undefined),
+          runtimePercentile: payload.runtime_percentile as number | undefined,
+          memoryPercentile: payload.memory_percentile as number | undefined,
+          statusRuntime: payload.status_runtime as string | undefined,
+          statusMemory: payload.status_memory as string | undefined,
+          totalCorrect: payload.total_correct as number | undefined,
+          totalTestcases: payload.total_testcases as number | undefined,
+          lastTestcase: payload.last_testcase as string | undefined,
+          expectedOutput: payload.expected_output as string | undefined,
+          codeOutput: payload.code_output as string | undefined,
+          submissionId: payload.submission_id as number | undefined,
         };
       },
     };
-  }, [language, code, problem, activeTestCaseIndex, customTestCases, editorRef]);
+  }, [language, code, problem, customTestCases, editorRef]);
 
   return (
     <div
@@ -353,16 +217,10 @@ export function EditorPanel({
 
       <div style={{ flex: 1, overflow: "hidden" }}>
         <PanelGroup direction="vertical">
-          {/* Code editor */}
           <Panel defaultSize={62} minSize={25}>
-            <CodeEditor
-              code={code}
-              language={language}
-              onChange={setCode}
-            />
+            <CodeEditor code={code} language={language} onChange={setCode} />
           </Panel>
 
-          {/* Drag handle */}
           <PanelResizeHandle
             style={{
               height: 6,
@@ -385,7 +243,6 @@ export function EditorPanel({
             />
           </PanelResizeHandle>
 
-          {/* Test case / result panel */}
           <Panel defaultSize={38} minSize={15}>
             <TestCasePanel
               testCases={problem.testCases}

@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * TopBar.tsx
- * Global navigation bar.
- * Shows logo, problem prev/next nav, timer, run/submit, settings.
- */
-
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   List,
@@ -18,156 +12,170 @@ import {
   CircleUser,
   Flame,
   Search,
-  Eye,
-  EyeOff,
   X,
-  Cpu,
-  Zap,
   Puzzle,
   RefreshCw,
-  Trash2,
 } from "lucide-react";
 import { DifficultyBadge } from "../ui/Badge";
 import type { ParsedProblem } from "../../types/ui";
 import { detectExtension } from "../../lib/extensionApi";
 
-// ─── Settings modal ───────────────────────────────────────────────────────────
-
-
 function SettingsModal({ onClose }: { onClose: () => void }) {
-  const [session, setSession] = useState(() =>
-    typeof window !== "undefined" ? (localStorage.getItem("lv_lc_session") ?? "") : ""
-  );
-  const [csrf, setCsrf] = useState(() =>
-    typeof window !== "undefined" ? (localStorage.getItem("lv_lc_csrf") ?? "") : ""
-  );
-  const [showSession, setShowSession] = useState(false);
-  const [showCsrf, setShowCsrf] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [extStatus, setExtStatus] = useState<"unknown" | "found" | "missing">("unknown");
-  const [fetchStatus, setFetchStatus] = useState<"idle" | "fetching" | "done" | "error">("idle");
-  const [fetchMsg, setFetchMsg] = useState("");
+  const [loginStatus, setLoginStatus] = useState<"unknown" | "logged_in" | "logged_out">("unknown");
+  const [lastCsrfRefreshAt, setLastCsrfRefreshAt] = useState<number | null>(null);
+  const [statusText, setStatusText] = useState("Checking extension...");
+  const [refreshing, setRefreshing] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
   const [extProbeVersion, setExtProbeVersion] = useState(0);
 
-  // Handle async extension responses
+  const handleRefreshExtensionStatus = useCallback(() => {
+    setExtProbeVersion((value) => value + 1);
+    setStatusText("Re-checking extension...");
+  }, []);
+
+  const handleLoginViaExtension = useCallback(() => {
+    setLoggingIn(true);
+    setStatusText("Opening LeetCode login...");
+    window.postMessage({ type: "LV_EXT_REQ_LOGIN" }, "*");
+  }, []);
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== window) return;
       const msg = event.data;
       if (!msg || typeof msg !== "object") return;
 
-      if (msg.type === "LV_EXT_RESP_FETCH") {
-        const resp = msg.data;
-        if (resp?.success && resp?.session && resp?.csrf) {
-          setSession(resp.session);
-          setCsrf(resp.csrf);
-          setFetchStatus("done");
-          setFetchMsg("✓ Tokens fetched! Click Save to apply.");
-        } else {
-          setFetchStatus("error");
-          setFetchMsg(resp?.error ?? msg.error ?? "Unknown error");
+      if (msg.type === "LV_EXT_RESP_LOGIN") {
+        setLoggingIn(false);
+
+        const resp = msg.data as {
+          success?: boolean;
+          loggedIn?: boolean;
+          alreadyLoggedIn?: boolean;
+          createdTab?: boolean;
+          lastCsrfRefreshAt?: number;
+          error?: string;
+          message?: string;
+        } | undefined;
+
+        if (!resp?.success) {
+          setLoginStatus("logged_out");
+          setStatusText(resp?.message ?? resp?.error ?? msg.error ?? "Failed to complete LeetCode login.");
+          return;
         }
+
+        setLoginStatus("logged_in");
+        if (typeof resp.lastCsrfRefreshAt === "number" && resp.lastCsrfRefreshAt > 0) {
+          setLastCsrfRefreshAt(resp.lastCsrfRefreshAt);
+        }
+
+        if (resp.alreadyLoggedIn) {
+          setStatusText("LeetCode login already active.");
+          return;
+        }
+
+        setStatusText(
+          resp.createdTab
+            ? "Login detected. Temporary login tab closed automatically."
+            : "Login detected from existing LeetCode tab.",
+        );
+        return;
       }
 
-      if (msg.type === "LV_EXT_RESP_CLEAR") {
-        // Clear finished in background
+      if (msg.type !== "LV_EXT_RESP_CHECK") return;
+      setRefreshing(false);
+
+      const resp = msg.data as {
+        success?: boolean;
+        loggedIn?: boolean;
+        lastCsrfRefreshAt?: number;
+        error?: string;
+      } | undefined;
+
+      if (!resp?.success) {
+        setLoginStatus("unknown");
+        setStatusText(resp?.error ?? msg.error ?? "Failed to verify LeetCode login.");
+        return;
       }
+
+      setLoginStatus(resp.loggedIn ? "logged_in" : "logged_out");
+      if (typeof resp.lastCsrfRefreshAt === "number" && resp.lastCsrfRefreshAt > 0) {
+        setLastCsrfRefreshAt(resp.lastCsrfRefreshAt);
+      }
+
+      setStatusText(
+        resp.loggedIn
+          ? "LeetCode login detected."
+          : "Not logged into LeetCode in this browser profile. Please login on leetcode.com.",
+      );
     };
 
     window.addEventListener("message", handleMessage);
-
-    return () => {
-      window.removeEventListener("message", handleMessage);
-    };
+    return () => window.removeEventListener("message", handleMessage);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function probeExtension() {
+    async function probeExtensionAndLogin() {
       setExtStatus("unknown");
-
-      // Quick burst first (for normal open/refresh flow)
+      setRefreshing(true);
       const immediateFound = await detectExtension(8, 220, 500);
       if (cancelled) return;
+
       if (immediateFound) {
         setExtStatus("found");
+        setStatusText("Checking LeetCode login...");
+        window.postMessage({ type: "LV_EXT_REQ_CHECK" }, "*");
         return;
       }
 
-      // Extra background retries (helps right after extension install/update)
       setExtStatus("missing");
+      setRefreshing(false);
+      setLoginStatus("unknown");
+      setStatusText("Extension not detected.");
+
       for (let i = 0; i < 6; i++) {
         await new Promise((resolve) => window.setTimeout(resolve, 1800));
         if (cancelled) return;
         const found = await detectExtension(2, 250, 450);
         if (cancelled) return;
-        if (found) {
-          setExtStatus("found");
-          return;
-        }
+        if (!found) continue;
+
+        setExtStatus("found");
+        setRefreshing(true);
+        setStatusText("Extension detected. Checking LeetCode login...");
+        window.postMessage({ type: "LV_EXT_REQ_CHECK" }, "*");
+        return;
       }
     }
 
-    probeExtension();
+    probeExtensionAndLogin();
     return () => {
       cancelled = true;
     };
   }, [extProbeVersion]);
 
-  const handleExtFetch = useCallback(() => {
-    setFetchStatus("fetching");
-    setFetchMsg("Contacting extension…");
-    window.postMessage({ type: "LV_EXT_REQ_FETCH" }, "*");
-  }, []);
+  const loginLabel = loginStatus === "logged_in"
+    ? "Logged in"
+    : loginStatus === "logged_out"
+      ? "Not logged in"
+      : "Checking...";
 
-  const handleClearTokens = useCallback(() => {
-    setSession("");
-    setCsrf("");
-    setFetchMsg("Tokens cleared. Click Save to apply changes.");
-  }, []);
-
-  const handleRefreshExtensionStatus = useCallback(() => {
-    setExtProbeVersion((v) => v + 1);
-  }, []);
-
-  function handleSave() {
-    const cleanSession = session.trim();
-    const cleanCsrf = csrf.trim();
-    if (cleanSession) {
-      localStorage.setItem("lv_lc_session", cleanSession);
-    } else {
-      localStorage.removeItem("lv_lc_session");
-    }
-    if (cleanCsrf) {
-      localStorage.setItem("lv_lc_csrf", cleanCsrf);
-    } else {
-      localStorage.removeItem("lv_lc_csrf");
-    }
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onClose(); }, 800);
-  }
-
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    background: "#11111b",
-    border: "1px solid #313244",
-    borderRadius: 6,
-    color: "#cdd6f4",
-    fontSize: 12,
-    padding: "8px 10px",
-    outline: "none",
-    boxSizing: "border-box",
-    fontFamily: "'Fira Code', monospace",
-  };
+  const loginColor = loginStatus === "logged_in"
+    ? "#a6e3a1"
+    : loginStatus === "logged_out"
+      ? "#f38ba8"
+      : "#f9e2af";
 
   return (
     <>
-      {/* Backdrop */}
       <div
         onClick={onClose}
         style={{
-          position: "fixed", inset: 0,
+          position: "fixed",
+          inset: 0,
           backgroundColor: "rgba(0,0,0,0.6)",
           backdropFilter: "blur(4px)",
           zIndex: 50,
@@ -175,11 +183,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         }}
       />
 
-      {/* Panel */}
       <div
         style={{
           position: "fixed",
-          top: "50%", left: "50%",
+          top: "50%",
+          left: "50%",
           transform: "translate(-50%,-50%)",
           zIndex: 51,
           width: "min(460px,92vw)",
@@ -193,205 +201,218 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           animation: "modalFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards",
         }}
       >
-        {/* Header */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "16px 20px",
-          borderBottom: "1px solid #313244",
-        }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "16px 20px",
+            borderBottom: "1px solid #313244",
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Settings size={16} style={{ color: "#89b4fa" }} />
             <span style={{ color: "#cdd6f4", fontSize: 15, fontWeight: 700 }}>Settings</span>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#6c7086", display: "flex", padding: 4 }}>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#6c7086",
+              display: "flex",
+              padding: 4,
+            }}
+          >
             <X size={16} />
           </button>
         </div>
 
-        {/* Body */}
-        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-            {/* ── Extension section ── */}
-            <div style={{ borderRadius: 8, border: "1px solid #313244", overflow: "hidden" }}>
-              <div style={{ padding: "10px 14px", background: "#181825", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <Puzzle size={14} style={{ color: extStatus === "found" ? "#a6e3a1" : "#6c7086" }} />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: "#cdd6f4" }}>Browser Extension</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
+        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ borderRadius: 8, border: "1px solid #313244", overflow: "hidden" }}>
+            <div
+              style={{
+                padding: "10px 14px",
+                background: "#181825",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <Puzzle size={14} style={{ color: extStatus === "found" ? "#a6e3a1" : "#6c7086" }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#cdd6f4" }}>Browser Extension</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: "2px 7px",
+                    borderRadius: 10,
                     background: extStatus === "found" ? "rgba(166,227,161,0.15)" : "rgba(243,139,168,0.12)",
                     color: extStatus === "found" ? "#a6e3a1" : "#f38ba8",
-                    border: extStatus === "found" ? "1px solid rgba(166,227,161,0.3)" : "1px solid rgba(243,139,168,0.25)"
-                  }}>
-                    {extStatus === "found" ? "Detected" : extStatus === "missing" ? "Not found" : "Checking…"}
-                  </span>
-                  <button
-                    onClick={handleRefreshExtensionStatus}
-                    title="Re-check extension"
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 6,
-                      border: "1px solid #313244",
-                      background: "#1e1e2e",
-                      color: "#a6adc8",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <RefreshCw size={12} />
-                  </button>
-                </div>
-              </div>
-              <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-                {extStatus !== "found" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <a
-                        href="https://github.com/Biraj2004/leetcode-viewer/releases/download/ex-1.0.0/extension.zip"
-                        download
-                        style={{
-                          flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#89b4fa",
-                          textDecoration: "none", padding: "6px 10px", borderRadius: 6,
-                          background: "rgba(137,180,250,0.1)", border: "1px solid rgba(137,180,250,0.2)"
-                        }}
-                      >
-                        <Puzzle size={12} /> Download ZIP
-                      </a>
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText("chrome://extensions/");
-                          const btn = document.getElementById("copy-ext-btn");
-                          if (btn) {
-                            const oldText = btn.innerText;
-                            btn.innerText = "Copied!";
-                            setTimeout(() => { btn.innerText = oldText; }, 2000);
-                          }
-                        }}
-                        id="copy-ext-btn"
-                        style={{
-                          display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#a6adc8",
-                          padding: "6px 10px", borderRadius: 6, border: "1px solid #313244", background: "#181825", cursor: "pointer"
-                        }}
-                      >
-                        Copy chrome://extensions
-                      </button>
-                    </div>
-                    <p style={{ margin: 0, fontSize: 10, color: "#a6adc8", lineHeight: 1.4 }}>
-                      * Browsers block direct redirects to internal pages. Download the ZIP, copy the URL above, paste it in a new tab, enable Developer Mode, and click <strong>Load Unpacked</strong>. <em>(If using Incognito, also toggle <strong>Allow in incognito</strong> in the extension details).</em>
-                    </p>
-                  </div>
-                )}
-                <button
-                  onClick={handleExtFetch}
-                  disabled={extStatus !== "found" || fetchStatus === "fetching"}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    padding: "7px 12px", borderRadius: 6, border: "none", cursor: extStatus === "found" ? "pointer" : "not-allowed",
-                    background: extStatus === "found" ? "#ffa116" : "#313244",
-                    color: extStatus === "found" ? "#1e1e2e" : "#45475a",
-                    fontWeight: 600, fontSize: 12, opacity: fetchStatus === "fetching" ? 0.6 : 1
+                    border: extStatus === "found"
+                      ? "1px solid rgba(166,227,161,0.3)"
+                      : "1px solid rgba(243,139,168,0.25)",
                   }}
                 >
-                  <RefreshCw size={12} style={{ animation: fetchStatus === "fetching" ? "spin 1s linear infinite" : "none" }} />
-                  {fetchStatus === "fetching" ? "Fetching…" : "Auto-Fetch via Extension"}
-                </button>
-                {fetchMsg && (
-                  <p style={{
-                    margin: 0, fontSize: 11, lineHeight: 1.4,
-                    color: fetchStatus === "error" ? "#f38ba8" : "#a6e3a1"
-                  }}>
-                    {fetchMsg}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* ── Manual fields ── */}
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6c7086", marginBottom: 6, fontFamily: "'Fira Code', monospace" }}>LEETCODE_SESSION</label>
-              <div style={{ position: "relative" }}>
-                <input type={showSession ? "text" : "password"} value={session}
-                  onChange={(e) => setSession(e.target.value)}
-                  placeholder="Paste your LEETCODE_SESSION cookie value…"
-                  style={{ ...inputStyle, paddingRight: 36 }}
-                />
-                <button type="button" onClick={() => setShowSession((v) => !v)}
-                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#6c7086", display: "flex" }}>
-                  {showSession ? <EyeOff size={13} /> : <Eye size={13} />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6c7086", marginBottom: 6, fontFamily: "'Fira Code', monospace" }}>csrftoken</label>
-              <div style={{ position: "relative" }}>
-                <input type={showCsrf ? "text" : "password"} value={csrf}
-                  onChange={(e) => setCsrf(e.target.value)}
-                  placeholder="Paste your csrftoken cookie value…"
-                  style={{ ...inputStyle, paddingRight: 36 }}
-                />
-                <button type="button" onClick={() => setShowCsrf((v) => !v)}
-                  style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#6c7086", display: "flex" }}>
-                  {showCsrf ? <EyeOff size={13} /> : <Eye size={13} />}
-                </button>
-              </div>
-            </div>
-
-            {/* ── Status + Clear ── */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              {session && csrf ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#a6e3a1" }} />
-                  <span style={{ fontSize: 11, color: "#a6e3a1" }}>Credentials configured</span>
-                </div>
-              ) : <div />}
-              {(session || csrf) && (
-                <button onClick={handleClearTokens}
+                  {extStatus === "found" ? "Detected" : extStatus === "missing" ? "Not found" : "Checking..."}
+                </span>
+                <button
+                  onClick={handleRefreshExtensionStatus}
+                  title="Re-check extension"
                   style={{
-                    display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 6,
-                    background: "rgba(243,139,168,0.1)", border: "1px solid rgba(243,139,168,0.25)",
-                    color: "#f38ba8", fontSize: 11, fontWeight: 600, cursor: "pointer"
-                  }}>
-                  <Trash2 size={11} /> Clear Tokens
+                    width: 22,
+                    height: 22,
+                    borderRadius: 6,
+                    border: "1px solid #313244",
+                    background: "#1e1e2e",
+                    color: "#a6adc8",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                  }}
+                >
+                  <RefreshCw size={12} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
+                </button>
+              </div>
+            </div>
+
+            <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              {extStatus !== "found" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <a
+                      href="https://github.com/Biraj2004/leetcode-viewer/releases/download/release/extension.zip"
+                      download
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 6,
+                        fontSize: 11,
+                        color: "#89b4fa",
+                        textDecoration: "none",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        background: "rgba(137,180,250,0.1)",
+                        border: "1px solid rgba(137,180,250,0.2)",
+                      }}
+                    >
+                      <Puzzle size={12} /> Download ZIP
+                    </a>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText("chrome://extensions/");
+                        const btn = document.getElementById("copy-ext-btn");
+                        if (!btn) return;
+                        const oldText = btn.innerText;
+                        btn.innerText = "Copied!";
+                        setTimeout(() => {
+                          btn.innerText = oldText;
+                        }, 2000);
+                      }}
+                      id="copy-ext-btn"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11,
+                        color: "#a6adc8",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: "1px solid #313244",
+                        background: "#181825",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Copy chrome://extensions
+                    </button>
+                  </div>
+                  <p style={{ margin: 0, fontSize: 10, color: "#a6adc8", lineHeight: 1.4 }}>
+                    Download the ZIP, open chrome://extensions, enable Developer Mode, and click Load Unpacked.
+                  </p>
+                </div>
+              )}
+
+              <div style={{ border: "1px solid #313244", borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 11, color: "#6c7086" }}>LeetCode Login</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: loginColor }}>{loginLabel}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 11, color: "#6c7086" }}>CSRF Auto Refresh</span>
+                  <span style={{ fontSize: 11, color: "#a6adc8" }}>
+                    {lastCsrfRefreshAt ? new Date(lastCsrfRefreshAt).toLocaleTimeString() : "Not refreshed yet"}
+                  </span>
+                </div>
+              </div>
+
+              {extStatus === "found" && loginStatus !== "logged_in" && (
+                <button
+                  onClick={handleLoginViaExtension}
+                  disabled={loggingIn}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    padding: "7px 12px",
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: loggingIn ? "not-allowed" : "pointer",
+                    background: "#ffa116",
+                    color: "#1e1e2e",
+                    fontWeight: 600,
+                    fontSize: 12,
+                    opacity: loggingIn ? 0.7 : 1,
+                  }}
+                >
+                  <RefreshCw size={12} style={{ animation: loggingIn ? "spin 1s linear infinite" : "none" }} />
+                  {loggingIn ? "Waiting for Login..." : "Login via Extension"}
                 </button>
               )}
+
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                  color: loginStatus === "logged_out" ? "#f38ba8" : "#a6adc8",
+                }}
+              >
+                {statusText}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Footer */}
-        <div style={{
-          padding: "14px 20px",
-          borderTop: "1px solid #313244",
-          display: "flex",
-          justifyContent: "flex-end",
-          gap: 10,
-        }}>
+        <div
+          style={{
+            padding: "14px 20px",
+            borderTop: "1px solid #313244",
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 10,
+          }}
+        >
           <button
             onClick={onClose}
             style={{
-              padding: "7px 16px", borderRadius: 7, border: "1px solid #313244",
-              background: "transparent", color: "#a6adc8", cursor: "pointer", fontSize: 13,
+              padding: "7px 16px",
+              borderRadius: 7,
+              border: "1px solid #313244",
+              background: "transparent",
+              color: "#a6adc8",
+              cursor: "pointer",
+              fontSize: 13,
             }}
           >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            style={{
-              padding: "7px 20px", borderRadius: 7, border: "none",
-              background: saved ? "#a6e3a1" : "#89b4fa",
-              color: "#1e1e2e", cursor: "pointer", fontSize: 13, fontWeight: 600,
-              transition: "background 0.2s",
-            }}
-          >
-            {saved ? "Saved ✓" : "Save"}
+            Close
           </button>
         </div>
       </div>
@@ -427,7 +448,7 @@ export function TopBar({
   isSubmitting,
 }: TopBarProps) {
   const DRAWER_ANIMATION_MS = 220;
-  const [timerActive, setTimerActive] = useState(true);   // auto-start on load
+  const [timerActive, setTimerActive] = useState(true);
   const [seconds, setSeconds] = useState(0);
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [isDrawerMounted, setIsDrawerMounted] = useState(false);
@@ -437,31 +458,38 @@ export function TopBar({
 
   useEffect(() => {
     if (timerActive) {
-      intervalRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(() => setSeconds((value) => value + 1), 1000);
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
     }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, [timerActive]);
 
   useEffect(() => {
-    if (isDrawerVisible) return;
-    if (!isDrawerMounted) return;
-
+    if (isDrawerVisible || !isDrawerMounted) return;
     const timeoutId = window.setTimeout(() => setIsDrawerMounted(false), DRAWER_ANIMATION_MS);
     return () => window.clearTimeout(timeoutId);
   }, [isDrawerVisible, isDrawerMounted]);
 
   useEffect(() => {
     if (!isDrawerVisible) return;
-
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeDrawer();
     };
-
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isDrawerVisible]);
+
+  useEffect(() => {
+    const sendHeartbeat = () => {
+      window.postMessage({ type: "LV_EXT_APP_HEARTBEAT" }, "*");
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const filteredProblems = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -496,10 +524,10 @@ export function TopBar({
     }
   }
 
-  function formatTime(t: number): string {
-    const h = String(Math.floor(t / 3600)).padStart(2, "0");
-    const m = String(Math.floor((t % 3600) / 60)).padStart(2, "0");
-    const s = String(t % 60).padStart(2, "0");
+  function formatTime(value: number): string {
+    const h = String(Math.floor(value / 3600)).padStart(2, "0");
+    const m = String(Math.floor((value % 3600) / 60)).padStart(2, "0");
+    const s = String(value % 60).padStart(2, "0");
     return `${h}:${m}:${s}`;
   }
 
@@ -532,13 +560,8 @@ export function TopBar({
           flexShrink: 0,
         }}
       >
-        {/* ── Left ── */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {/* Logo */}
-          <a
-            href="/"
-            style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none" }}
-          >
+          <a href="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none" }}>
             <div
               style={{
                 width: 26,
@@ -574,7 +597,6 @@ export function TopBar({
             <List size={17} />
           </button>
 
-          {/* Problem navigator */}
           <div
             style={{
               display: "flex",
@@ -599,14 +621,7 @@ export function TopBar({
               <ChevronLeft size={15} />
             </button>
 
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "0 6px",
-              }}
-            >
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 6px" }}>
               <span
                 style={{
                   color: "#a6adc8",
@@ -644,7 +659,6 @@ export function TopBar({
           </button>
         </div>
 
-        {/* ── Center: timer ── */}
         <button
           onClick={() => setTimerActive(!timerActive)}
           title={timerActive ? "Pause timer" : "Start timer"}
@@ -667,7 +681,6 @@ export function TopBar({
           <span>{formatTime(seconds)}</span>
         </button>
 
-        {/* ── Right: run / submit / settings ── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
             onClick={onRun}
@@ -689,7 +702,7 @@ export function TopBar({
             }}
           >
             <Play size={14} style={{ color: "#a6e3a1" }} />
-            {isRunning ? "Running…" : "Run"}
+            {isRunning ? "Running..." : "Run"}
           </button>
 
           <button
@@ -712,10 +725,8 @@ export function TopBar({
             }}
           >
             <Upload size={14} />
-            {isSubmitting ? "Submitting…" : "Submit"}
+            {isSubmitting ? "Submitting..." : "Submit"}
           </button>
-
-
 
           <button
             style={{
@@ -786,15 +797,8 @@ export function TopBar({
               transition: `transform ${DRAWER_ANIMATION_MS}ms ease, opacity ${DRAWER_ANIMATION_MS}ms ease`,
             }}
           >
-            <div
-              style={{
-                padding: "14px 14px 10px",
-                borderBottom: "1px solid #313244",
-              }}
-            >
-              <div style={{ color: "#cdd6f4", fontSize: 14, fontWeight: 700 }}>
-                All Questions
-              </div>
+            <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid #313244" }}>
+              <div style={{ color: "#cdd6f4", fontSize: 14, fontWeight: 700 }}>All Questions</div>
               <div style={{ color: "#6c7086", fontSize: 12, marginTop: 4 }}>
                 {totalProblems} problem{totalProblems === 1 ? "" : "s"}
               </div>
@@ -831,14 +835,7 @@ export function TopBar({
 
             <div style={{ overflowY: "auto", padding: 10 }}>
               {filteredProblems.length === 0 && (
-                <div
-                  style={{
-                    color: "#6c7086",
-                    fontSize: 13,
-                    textAlign: "center",
-                    padding: "26px 10px",
-                  }}
-                >
+                <div style={{ color: "#6c7086", fontSize: 13, textAlign: "center", padding: "26px 10px" }}>
                   No questions found.
                 </div>
               )}

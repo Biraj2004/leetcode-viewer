@@ -2,13 +2,24 @@
  * background.js - Service Worker (Manifest V3)
  *
  * Responsibilities:
- * - Fetch/check LeetCode auth cookies for the app settings flow
+ * - Check LeetCode login status for the app settings flow
  * - Route LeetCode judge calls through a real leetcode.com tab
  * - Re-inject content.js into already-open matching tabs after install/update
  */
 
 const LC_ORIGIN = "https://leetcode.com";
 const LC_TAB_URL = "https://leetcode.com/problemset/";
+const LC_LOGIN_URL = "https://leetcode.com/accounts/login/";
+const CSRF_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const APP_ACTIVE_WINDOW_MS = 90 * 1000; // App considered active if heartbeat within 90s
+const LOGIN_WAIT_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+const LOGIN_POLL_INTERVAL_MS = 1500;
+const STORAGE_KEYS = {
+  lastCsrfRefreshAt: "lv_last_csrf_refresh_at",
+  lastAppHeartbeatAt: "lv_last_app_heartbeat_at",
+};
+
+let csrfRefreshInFlight = false;
 
 async function getLCCookies() {
   const [sessionCookie, csrfCookie] = await Promise.all([
@@ -30,6 +41,7 @@ async function validateLCCookies(session, csrf) {
       headers: {
         "content-type": "application/json",
         "x-csrftoken": csrf,
+        Cookie: `LEETCODE_SESSION=${session}; csrftoken=${csrf}`,
         origin: LC_ORIGIN,
         referer: `${LC_ORIGIN}/`,
       },
@@ -50,78 +62,15 @@ async function validateLCCookies(session, csrf) {
   }
 }
 
-function waitForCookies(tabId, timeoutMs = 120000) {
-  return new Promise((resolve, reject) => {
-    const intervalMs = 1500;
-    let elapsed = 0;
-
-    const timer = setInterval(async () => {
-      elapsed += intervalMs;
-      const { session, csrf } = await getLCCookies();
-
-      if (session && csrf) {
-        const isValid = await validateLCCookies(session, csrf);
-        if (isValid) {
-          clearInterval(timer);
-          try {
-            await chrome.tabs.remove(tabId);
-          } catch {}
-          resolve({ session, csrf });
-          return;
-        }
-      }
-
-      if (elapsed >= timeoutMs) {
-        clearInterval(timer);
-        reject(new Error("Timed out waiting for LeetCode login."));
-      }
-    }, intervalMs);
-  });
-}
-
-async function clearLCCookies() {
-  await Promise.all([
-    chrome.cookies.remove({ url: LC_ORIGIN, name: "LEETCODE_SESSION" }),
-    chrome.cookies.remove({ url: LC_ORIGIN, name: "csrftoken" }),
+async function getAppRefreshState() {
+  const state = await chrome.storage.local.get([
+    STORAGE_KEYS.lastCsrfRefreshAt,
+    STORAGE_KEYS.lastAppHeartbeatAt,
   ]);
-}
-
-async function handleFetchTokens(force = false) {
-  if (!force) {
-    const existing = await getLCCookies();
-    if (existing.session && existing.csrf) {
-      const isValid = await validateLCCookies(existing.session, existing.csrf);
-      if (isValid) {
-        return {
-          success: true,
-          session: existing.session,
-          csrf: existing.csrf,
-          alreadyLoggedIn: true,
-        };
-      }
-    }
-  }
-
-  await clearLCCookies();
-  const tab = await chrome.tabs.create({
-    url: "https://leetcode.com/accounts/login/",
-    active: true,
-  });
-
-  try {
-    const tokens = await waitForCookies(tab.id);
-    return { success: true, ...tokens, alreadyLoggedIn: false };
-  } catch (err) {
-    try {
-      await chrome.tabs.remove(tab.id);
-    } catch {}
-    return { success: false, error: err.message };
-  }
-}
-
-async function handleClearTokens() {
-  // Keep browser cookies intact. The app clears its own localStorage copy.
-  return { success: true };
+  return {
+    lastCsrfRefreshAt: Number(state[STORAGE_KEYS.lastCsrfRefreshAt] ?? 0),
+    lastAppHeartbeatAt: Number(state[STORAGE_KEYS.lastAppHeartbeatAt] ?? 0),
+  };
 }
 
 function waitForTabComplete(tabId, timeoutMs = 20000) {
@@ -193,9 +142,11 @@ function sendMessageToTab(tabId, message) {
   });
 }
 
-async function requestLeetCodeApi(payload) {
-  const tabId = await ensureLeetCodeTab();
+function isMissingReceivingEndError(error) {
+  return String(error).includes("Receiving end does not exist");
+}
 
+async function requestLeetCodeApiInTab(tabId, payload) {
   try {
     const response = await sendMessageToTab(tabId, {
       type: "LC_EXEC_REQUEST",
@@ -203,9 +154,8 @@ async function requestLeetCodeApi(payload) {
     });
     return response;
   } catch (error) {
-    const msg = String(error);
-    if (!msg.includes("Receiving end does not exist")) {
-      return { success: false, error: msg };
+    if (!isMissingReceivingEndError(error)) {
+      return { success: false, error: String(error) };
     }
   }
 
@@ -222,6 +172,174 @@ async function requestLeetCodeApi(payload) {
   } catch (error) {
     return { success: false, error: String(error) };
   }
+}
+
+async function requestLeetCodeApi(payload) {
+  const tabId = await ensureLeetCodeTab();
+  return requestLeetCodeApiInTab(tabId, payload);
+}
+
+async function waitForLoginCompletion(timeoutMs = LOGIN_WAIT_TIMEOUT_MS) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const { session, csrf } = await getLCCookies();
+    if (session && csrf) {
+      const valid = await validateLCCookies(session, csrf);
+      if (valid) return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, LOGIN_POLL_INTERVAL_MS));
+  }
+
+  return false;
+}
+
+async function ensureLeetCodeLogin() {
+  const currentStatus = await checkLoginStatus();
+  if (currentStatus.loggedIn) {
+    return { success: true, alreadyLoggedIn: true, openedLogin: false };
+  }
+
+  let tabId = await findLeetCodeTab();
+  let createdTab = false;
+
+  if (tabId == null) {
+    const tab = await chrome.tabs.create({ url: LC_LOGIN_URL, active: true });
+    if (typeof tab.id !== "number") {
+      return { success: false, error: "TAB_CREATE_FAILED", message: "Unable to open LeetCode login tab." };
+    }
+    tabId = tab.id;
+    createdTab = true;
+  } else {
+    await chrome.tabs.update(tabId, { url: LC_LOGIN_URL, active: true });
+  }
+
+  try {
+    await waitForTabComplete(tabId, 20000).catch(() => {});
+    const loggedIn = await waitForLoginCompletion();
+    if (!loggedIn) {
+      return {
+        success: false,
+        error: "LOGIN_TIMEOUT",
+        message: "Login not detected in time. Please complete login on leetcode.com and try again.",
+      };
+    }
+
+    const { lastCsrfRefreshAt } = await getAppRefreshState();
+    return {
+      success: true,
+      loggedIn: true,
+      openedLogin: true,
+      createdTab,
+      lastCsrfRefreshAt,
+    };
+  } finally {
+    if (createdTab && typeof tabId === "number") {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch {}
+    }
+  }
+}
+
+async function checkLoginStatus() {
+  const { session, csrf } = await getLCCookies();
+  const hasTokens = !!(session && csrf);
+  let loggedIn = false;
+
+  if (hasTokens) {
+    loggedIn = await validateLCCookies(session, csrf);
+  }
+
+  const { lastCsrfRefreshAt } = await getAppRefreshState();
+  return { success: true, hasTokens, loggedIn, lastCsrfRefreshAt };
+}
+
+async function maybeRefreshCsrfSession(reason = "heartbeat") {
+  if (csrfRefreshInFlight) {
+    return { success: true, skipped: "IN_FLIGHT" };
+  }
+
+  const now = Date.now();
+  const { lastCsrfRefreshAt, lastAppHeartbeatAt } = await getAppRefreshState();
+  const appActive = now - lastAppHeartbeatAt <= APP_ACTIVE_WINDOW_MS;
+
+  if (!appActive) {
+    return { success: true, skipped: "APP_INACTIVE" };
+  }
+
+  if (now - lastCsrfRefreshAt < CSRF_REFRESH_INTERVAL_MS) {
+    return {
+      success: true,
+      skipped: "NOT_DUE",
+      nextDueAt: lastCsrfRefreshAt + CSRF_REFRESH_INTERVAL_MS,
+    };
+  }
+
+  const { session, csrf } = await getLCCookies();
+  if (!session || !csrf) {
+    return { success: false, error: "NOT_LOGGED_IN", message: "Please login on leetcode.com." };
+  }
+
+  if (!lastCsrfRefreshAt) {
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.lastCsrfRefreshAt]: now,
+    });
+    return {
+      success: true,
+      skipped: "BASELINED",
+      nextDueAt: now + CSRF_REFRESH_INTERVAL_MS,
+    };
+  }
+
+  csrfRefreshInFlight = true;
+  let tabId;
+  try {
+    const tab = await chrome.tabs.create({ url: LC_TAB_URL, active: false });
+    if (typeof tab.id !== "number") {
+      return { success: false, error: "TAB_CREATE_FAILED", message: "Unable to create refresh tab." };
+    }
+    tabId = tab.id;
+    await waitForTabComplete(tabId, 20000);
+
+    const refreshResp = await requestLeetCodeApiInTab(tabId, { mode: "refresh_csrf" });
+    if (!refreshResp?.success) {
+      return refreshResp ?? {
+        success: false,
+        error: "CSRF_REFRESH_FAILED",
+        message: "Failed to refresh CSRF token.",
+      };
+    }
+
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.lastCsrfRefreshAt]: Date.now(),
+    });
+
+    return {
+      success: true,
+      refreshed: true,
+      reason,
+      refreshedAt: Date.now(),
+      rotated: !!refreshResp?.payload?.rotated,
+    };
+  } catch (error) {
+    return { success: false, error: "CSRF_REFRESH_FAILED", message: String(error) };
+  } finally {
+    csrfRefreshInFlight = false;
+    if (typeof tabId === "number") {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch {}
+    }
+  }
+}
+
+async function handleAppHeartbeat(pageUrl) {
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.lastAppHeartbeatAt]: Date.now(),
+  });
+  const refresh = await maybeRefreshCsrfSession("heartbeat");
+  return { success: true, pageUrl, refresh };
 }
 
 async function reinjectContentScriptIntoExistingTabs() {
@@ -251,35 +369,30 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === "FETCH_LC_TOKENS") {
-    handleFetchTokens(message.force)
+  if (message.type === "CHECK_LC_LOGIN_STATUS") {
+    checkLoginStatus()
       .then(sendResponse)
-      .catch((err) => sendResponse({ success: false, error: err.message }));
-    return true;
-  }
-
-  if (message.type === "CHECK_LC_TOKENS") {
-    getLCCookies().then(({ session, csrf }) => {
-      sendResponse({
-        success: true,
-        hasTokens: !!(session && csrf),
-        session,
-        csrf,
-      });
-    });
-    return true;
-  }
-
-  if (message.type === "CLEAR_LC_TOKENS") {
-    handleClearTokens()
-      .then(sendResponse)
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .catch((err) => sendResponse({ success: false, error: String(err) }));
     return true;
   }
 
   if (message.type === "REQUEST_LC_API") {
     requestLeetCodeApi(message.payload)
       .then((resp) => sendResponse(resp))
+      .catch((err) => sendResponse({ success: false, error: String(err) }));
+    return true;
+  }
+
+  if (message.type === "ENSURE_LC_LOGIN") {
+    ensureLeetCodeLogin()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: String(err) }));
+    return true;
+  }
+
+  if (message.type === "APP_HEARTBEAT") {
+    handleAppHeartbeat(message.url ?? "")
+      .then(sendResponse)
       .catch((err) => sendResponse({ success: false, error: String(err) }));
     return true;
   }

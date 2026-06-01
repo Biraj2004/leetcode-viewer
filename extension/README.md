@@ -1,47 +1,29 @@
-# Leetcode Viewer Authenticator — Chrome Extension
+# Leetcode Viewer Extension
 
-A **Manifest V3** Chrome Extension that securely reads your `LEETCODE_SESSION` and `csrftoken` cookies and passes them to the Leetcode Viewer web app — no copy-pasting needed!
+Manifest V3 Chrome extension used by Leetcode Viewer to execute LeetCode requests from a real `leetcode.com` tab context.
 
-## How to Install (Developer Mode)
+## Install (Developer Mode)
 
-1. Open Chrome and go to `chrome://extensions`
-2. Enable **"Developer mode"** (toggle in the top-right corner)
-3. Click **"Load unpacked"**
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
 4. Select this `extension/` folder
-5. The extension is now installed! Pin it to your toolbar for easy access.
 
-> **Note**: You need to add **PNG icons** named `icon16.png`, `icon48.png`, and `icon128.png` inside the `icons/` folder before loading. You can convert `icons/icon.svg` to PNG using any online converter, or use the placeholder approach below.
+## What it does
 
-## How It Works
+1. The web app checks whether the extension is installed.
+2. The app asks the extension for current login status (`logged in` / `not logged in`).
+3. Run/submit/submission-details requests are sent to the extension.
+4. The extension forwards those requests to a live `leetcode.com` tab where browser cookies are naturally applied.
+5. While the app is open, the extension heartbeat can trigger periodic CSRF refresh checks.
 
-1. **From the Leetcode Viewer Settings panel**, click **"Auto-Fetch via Extension"**.
-2. The web app sends a secure message to the extension using Chrome's `externally_connectable` API.
-3. The extension's background service worker calls `chrome.cookies.get()` for `leetcode.com`.
-4. **If you're already logged in** → tokens are returned immediately. No browser navigation needed.
-5. **If not logged in** → the extension opens a `leetcode.com/accounts/login/` tab. Once you log in, the extension detects the cookies appearing, closes the tab, and sends the tokens back.
-6. The tokens are stored in your app's `localStorage` — the extension never stores them.
+No manual token copy/paste is required.
 
-## Permissions Explained
+## Permissions
 
-| Permission | Why it's needed |
+| Permission | Why it is needed |
 |---|---|
-| `cookies` | To read `LEETCODE_SESSION` and `csrftoken` from `leetcode.com` |
-| `tabs` | To open/close the login tab if you're not logged in |
-| `host_permissions: https://leetcode.com/*` | To access LeetCode's cookies |
-| `host_permissions: localhost + vercel.app` | To receive messages from the web app |
-
-## Adding to `externally_connectable`
-
-If you deploy to a **custom domain** (not `*.vercel.app`), add your domain to the `externally_connectable.matches` array in `manifest.json`:
-
-```json
-"externally_connectable": {
-  "matches": [
-    "http://localhost:*/*",
-    "https://*.vercel.app/*",
-    "https://your-custom-domain.com/*"
-  ]
-}
-```
-
-Then reload the extension in `chrome://extensions`.
+| `cookies` | Read `LEETCODE_SESSION` and `csrftoken` for login/refresh checks |
+| `tabs` | Find or create a LeetCode tab for request execution |
+| `scripting` | Re-inject `content.js` when needed |
+| `storage` | Track app heartbeat and CSRF refresh timestamps |

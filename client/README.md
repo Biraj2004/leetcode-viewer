@@ -6,7 +6,7 @@ This folder contains a clean Next.js migration of the coding playground UI.
 
 - LeetCode-style split layout UI
 - `TopBar`, `ProblemPanel`, `EditorPanel`
-- Run/Submit official LeetCode execution flow via browser extension token fetching
+- Run/Submit official LeetCode execution flow via browser extension bridge
 
 ## Setup
 

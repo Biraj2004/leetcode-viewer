@@ -2,13 +2,14 @@
   "manifest_version": 3,
   "name": "Leetcode Viewer Authenticator",
   "version": "1.0.0",
-  "description": "Securely fetches your LeetCode session tokens for Leetcode Viewer.",
+  "description": "Runs LeetCode API requests from a real leetcode.com tab for Leetcode Viewer.",
   "incognito": "split",
 
   "permissions": [
     "cookies",
     "tabs",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "https://leetcode.com/*",

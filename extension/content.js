@@ -34,19 +34,20 @@ function getCookieValue(name) {
   return "";
 }
 
-function getLCCredentialsFromBackground() {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "CHECK_LC_TOKENS" }, (resp) => {
-      if (chrome.runtime.lastError) {
-        resolve({ session: "", csrf: "" });
-        return;
-      }
-      resolve({
-        session: resp?.session ?? "",
-        csrf: resp?.csrf ?? "",
-      });
-    });
-  });
+function getLCCredentialsFromCookies() {
+  return {
+    session: getCookieValue("LEETCODE_SESSION"),
+    csrf: getCookieValue("csrftoken"),
+  };
+}
+
+function missingCsrfError() {
+  return {
+    success: false,
+    status: 401,
+    error: "MISSING_SESSION",
+    message: "LeetCode csrf token missing. Please login on leetcode.com and refresh the page.",
+  };
 }
 
 function makeLcHeaders(titleSlug, csrfToken) {
@@ -89,17 +90,10 @@ async function pollCheck(checkUrl, headers) {
 
 async function executeRun(payload) {
   const { titleSlug, questionId, lang, typedCode, dataInput } = payload;
-  const creds = await getLCCredentialsFromBackground();
-  const csrfToken = creds.csrf || getCookieValue("csrftoken");
+  const creds = getLCCredentialsFromCookies();
+  const csrfToken = creds.csrf;
 
-  if (!creds.session || !csrfToken) {
-    return {
-      success: false,
-      status: 401,
-      error: "MISSING_SESSION",
-      message: "LeetCode session missing. Please login on leetcode.com.",
-    };
-  }
+  if (!csrfToken) return missingCsrfError();
 
   const headers = makeLcHeaders(titleSlug, csrfToken);
   const runPayload = {
@@ -199,17 +193,10 @@ async function executeRun(payload) {
 
 async function executeSubmit(payload) {
   const { titleSlug, questionId, lang, typedCode } = payload;
-  const creds = await getLCCredentialsFromBackground();
-  const csrfToken = creds.csrf || getCookieValue("csrftoken");
+  const creds = getLCCredentialsFromCookies();
+  const csrfToken = creds.csrf;
 
-  if (!creds.session || !csrfToken) {
-    return {
-      success: false,
-      status: 401,
-      error: "MISSING_SESSION",
-      message: "LeetCode session missing. Please login on leetcode.com.",
-    };
-  }
+  if (!csrfToken) return missingCsrfError();
 
   const headers = makeLcHeaders(titleSlug, csrfToken);
   const submitPayload = {
@@ -307,16 +294,9 @@ async function executeSubmit(payload) {
 
 async function executeSubmissionDetails(payload) {
   const { submissionId } = payload;
-  const creds = await getLCCredentialsFromBackground();
-  const csrfToken = creds.csrf || getCookieValue("csrftoken");
-  if (!creds.session || !csrfToken) {
-    return {
-      success: false,
-      status: 401,
-      error: "MISSING_SESSION",
-      message: "LeetCode session missing. Please login on leetcode.com.",
-    };
-  }
+  const creds = getLCCredentialsFromCookies();
+  const csrfToken = creds.csrf;
+  if (!csrfToken) return missingCsrfError();
   if (!submissionId) {
     return {
       success: false,
@@ -423,11 +403,68 @@ async function executeSubmissionDetails(payload) {
   };
 }
 
+async function executeRefreshCsrf() {
+  const credsBefore = getLCCredentialsFromCookies();
+  const csrfToken = credsBefore.csrf;
+  if (!csrfToken) return missingCsrfError();
+
+  const refreshQuery = `query globalCommonHeader {
+    userStatus {
+      isSignedIn
+      username
+    }
+  }`;
+
+  const res = await fetch(`${LC_BASE}/graphql/`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+      "x-csrftoken": csrfToken,
+      origin: LC_BASE,
+      referer: `${LC_BASE}/`,
+      accept: "application/json",
+    },
+    body: JSON.stringify({ query: refreshQuery }),
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    return {
+      success: false,
+      status: 401,
+      error: "SESSION_EXPIRED",
+      message: "LeetCode session expired. Please login again.",
+    };
+  }
+  if (!res.ok) {
+    return {
+      success: false,
+      status: 502,
+      error: "CSRF_REFRESH_FAILED",
+      message: `LeetCode refresh failed (HTTP ${res.status}).`,
+    };
+  }
+
+  await res.json().catch(() => null);
+  const credsAfter = getLCCredentialsFromCookies();
+
+  return {
+    success: true,
+    payload: {
+      refreshedAt: Date.now(),
+      rotated: !!(credsAfter.csrf && credsBefore.csrf && credsAfter.csrf !== credsBefore.csrf),
+      hasSession: !!credsAfter.session,
+      hasCsrf: !!credsAfter.csrf,
+    },
+  };
+}
+
 async function executeLeetCodeRequest(payload) {
   const mode = payload?.mode;
   if (mode === "run") return executeRun(payload);
   if (mode === "submit") return executeSubmit(payload);
   if (mode === "submission_details") return executeSubmissionDetails(payload);
+  if (mode === "refresh_csrf") return executeRefreshCsrf();
   return {
     success: false,
     status: 400,
@@ -451,7 +488,7 @@ function handleAppPageBridge() {
     }
 
     if (message.type === "LV_EXT_REQ_CHECK") {
-      chrome.runtime.sendMessage({ type: "CHECK_LC_TOKENS" }, (resp) => {
+      chrome.runtime.sendMessage({ type: "CHECK_LC_LOGIN_STATUS" }, (resp) => {
         if (chrome.runtime.lastError) {
           window.postMessage({
             type: "LV_EXT_RESP_CHECK",
@@ -460,37 +497,6 @@ function handleAppPageBridge() {
           return;
         }
         window.postMessage({ type: "LV_EXT_RESP_CHECK", data: resp }, "*");
-      });
-      return;
-    }
-
-    if (message.type === "LV_EXT_REQ_FETCH") {
-      chrome.runtime.sendMessage({
-        type: "FETCH_LC_TOKENS",
-        force: message.force,
-      }, (resp) => {
-        if (chrome.runtime.lastError) {
-          window.postMessage({
-            type: "LV_EXT_RESP_FETCH",
-            error: chrome.runtime.lastError.message,
-          }, "*");
-          return;
-        }
-        window.postMessage({ type: "LV_EXT_RESP_FETCH", data: resp }, "*");
-      });
-      return;
-    }
-
-    if (message.type === "LV_EXT_REQ_CLEAR") {
-      chrome.runtime.sendMessage({ type: "CLEAR_LC_TOKENS" }, (resp) => {
-        if (chrome.runtime.lastError) {
-          window.postMessage({
-            type: "LV_EXT_RESP_CLEAR",
-            error: chrome.runtime.lastError.message,
-          }, "*");
-          return;
-        }
-        window.postMessage({ type: "LV_EXT_RESP_CLEAR", data: resp }, "*");
       });
       return;
     }
@@ -514,6 +520,28 @@ function handleAppPageBridge() {
           data: resp,
         }, "*");
       });
+      return;
+    }
+
+    if (message.type === "LV_EXT_REQ_LOGIN") {
+      chrome.runtime.sendMessage({ type: "ENSURE_LC_LOGIN" }, (resp) => {
+        if (chrome.runtime.lastError) {
+          window.postMessage({
+            type: "LV_EXT_RESP_LOGIN",
+            error: chrome.runtime.lastError.message,
+          }, "*");
+          return;
+        }
+        window.postMessage({ type: "LV_EXT_RESP_LOGIN", data: resp }, "*");
+      });
+      return;
+    }
+
+    if (message.type === "LV_EXT_APP_HEARTBEAT") {
+      chrome.runtime.sendMessage(
+        { type: "APP_HEARTBEAT", url: window.location.href },
+        () => {},
+      );
     }
   });
 }

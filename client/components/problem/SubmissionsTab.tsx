@@ -4,7 +4,7 @@
  * SubmissionsTab.tsx
  *
  * Lists stored submission IDs for the current problem.
- * On click: fetches full details from LC GraphQL via /api/leetcode (mode: "submission_details").
+ * On click: fetches full details from LeetCode via extension bridge (mode: "submission_details").
  * The distribution charts are shown in the detail view — not during the submit flow.
  * localStorage only stores the ID + minimal metadata (no code, no percentiles).
  */
@@ -541,52 +541,23 @@ export function SubmissionsTab({ questionId, titleSlug, refreshKey }: Submission
 
     try {
       const extAvailable = await detectExtension(2, 200, 450);
-      if (extAvailable) {
-        try {
-          const data = await requestLeetCodeViaExtension({
-            mode: "submission_details",
-            submissionId,
-            titleSlug,
-            questionId,
-            lang: "",
-            typedCode: "",
-          }, 90000) as SubmissionDetail;
-          setDetail(data);
-          return;
-        } catch (error) {
-          const extErr = error as Error & { code?: string };
-          if (extErr.code === "SESSION_EXPIRED" || extErr.code === "MISSING_SESSION") {
-            setError(extErr.message);
-            return;
-          }
-        }
-      }
-
-      const session = localStorage.getItem("lv_lc_session") ?? "";
-      const csrf = localStorage.getItem("lv_lc_csrf") ?? "";
-      const res = await fetch("/api/leetcode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "submission_details",
-          submissionId,
-          titleSlug,
-          questionId,
-          lang: "",
-          typedCode: "",
-          leetcodeSession: session,
-          csrfToken: csrf,
-        }),
-      });
-
-      const data = await res.json() as SubmissionDetail & { error?: string; message?: string };
-      if (!res.ok) {
-        setError(data.message ?? `Error: HTTP ${res.status}`);
+      if (!extAvailable) {
+        setError("Extension not detected. Please install/enable the extension and login on leetcode.com.");
         return;
       }
+
+      const data = await requestLeetCodeViaExtension({
+        mode: "submission_details",
+        submissionId,
+        titleSlug,
+        questionId,
+        lang: "",
+        typedCode: "",
+      }, 90000) as SubmissionDetail;
+
       setDetail(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Network error");
+      setError(e instanceof Error ? e.message : "Extension request failed");
     } finally {
       setLoading(false);
     }

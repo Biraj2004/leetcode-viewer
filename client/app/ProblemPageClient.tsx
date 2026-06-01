@@ -184,8 +184,6 @@ export function ProblemPageClient({ problems, initialIndex }: ProblemPageClientP
                 key={problem.titleSlug}
                 problem={problem}
                 editorRef={editorRef}
-                onRun={handleRun}
-                onSubmit={handleSubmit}
                 isRunning={isRunning}
                 isSubmitting={isSubmitting}
                 result={result}
