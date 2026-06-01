@@ -307,16 +307,20 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                     </a>
                     <button
                       onClick={() => {
-                        navigator.clipboard.writeText("chrome://extensions/");
-                        const btn = document.getElementById("copy-ext-btn");
+                        const url = "chrome://extensions/";
+                        const opened = window.open(url, "_blank", "noopener,noreferrer");
+                        if (opened) return;
+
+                        navigator.clipboard.writeText(url);
+                        const btn = document.getElementById("open-ext-btn");
                         if (!btn) return;
                         const oldText = btn.innerText;
-                        btn.innerText = "Copied!";
+                        btn.innerText = "Open blocked, copied!";
                         setTimeout(() => {
                           btn.innerText = oldText;
                         }, 2000);
                       }}
-                      id="copy-ext-btn"
+                      id="open-ext-btn"
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -330,7 +334,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                         cursor: "pointer",
                       }}
                     >
-                      Copy chrome://extensions
+                      Open chrome://extensions
                     </button>
                   </div>
                   <p style={{ margin: 0, fontSize: 10, color: "#a6adc8", lineHeight: 1.4 }}>
@@ -391,30 +395,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        <div
-          style={{
-            padding: "14px 20px",
-            borderTop: "1px solid #313244",
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 10,
-          }}
-        >
-          <button
-            onClick={onClose}
-            style={{
-              padding: "7px 16px",
-              borderRadius: 7,
-              border: "1px solid #313244",
-              background: "transparent",
-              color: "#a6adc8",
-              cursor: "pointer",
-              fontSize: 13,
-            }}
-          >
-            Close
-          </button>
-        </div>
       </div>
     </>
   );
