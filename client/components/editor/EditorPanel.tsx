@@ -19,6 +19,7 @@ import { TestCasePanel } from "./testcase/TestCasePanel";
 import { toast } from "../ui/Toast";
 import type { ParsedProblem, LanguageKey } from "../../types/ui";
 import type { ExecuteResult, EditorHandle, CaseResult } from "../../types/execution";
+import { detectExtension, requestLeetCodeViaExtension } from "../../lib/extensionApi";
 
 // LeetCode language keys (same as our LanguageKey for the 5 we support)
 const LC_LANG_MAP: Record<LanguageKey, string> = {
@@ -111,7 +112,7 @@ export function EditorPanel({
     (editorRef as unknown as { current: { _lang?: string; _code?: string; execute: unknown } }).current = {
       _lang: language,
       _code: code,
-      execute: async ({ mode = "run" } = {}): Promise<ExecuteResult> => {
+      execute: async ({ mode = "run" }: { mode?: "run" | "submit" } = {}): Promise<ExecuteResult> => {
         const { leetcodeSession, csrfToken } = getLCCredentials();
         const lcLang = LC_LANG_MAP[language];
         if (!lcLang) throw new Error(`Unsupported language for LeetCode: ${language}`);
@@ -129,47 +130,103 @@ export function EditorPanel({
         }
         // Submit: dataInput is undefined — LC uses its own full test suite
 
-        const response = await fetch("/api/leetcode", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mode,
-            titleSlug:      problem.titleSlug,
-            questionId:     problem.questionId,
-            style:          undefined,
-            lang:           lcLang,
-            typedCode:      code,
-            dataInput,
-            leetcodeSession,
-            csrfToken,
-          }),
-        });
+        let payload: Record<string, unknown>;
+        const extAvailable = await detectExtension(2, 200, 450);
 
-        const payload = await response.json() as Record<string, unknown>;
+        if (extAvailable) {
+          try {
+            const extPayload = await requestLeetCodeViaExtension({
+              mode,
+              titleSlug: problem.titleSlug,
+              questionId: problem.questionId,
+              lang: lcLang,
+              typedCode: code,
+              dataInput,
+            }, 90000);
+            payload = extPayload as Record<string, unknown>;
+          } catch (error) {
+            const errObj = error as Error & { code?: string };
+            const errCode = errObj.code;
+            const message = errObj.message || "Extension request failed.";
 
-        // Handle known error codes with toasts
-        if (!response.ok) {
-          const errCode = payload.error as string | undefined;
-          const message = (payload.message as string | undefined) ?? "LeetCode request failed.";
+            if (errCode === "SESSION_EXPIRED" || errCode === "MISSING_SESSION") {
+              toast.error(message);
+              throw new Error(message);
+            }
+            if (errCode === "RATE_LIMITED" || errCode === "TIMEOUT") {
+              toast.warning(message);
+              throw new Error(message);
+            }
 
-          if (errCode === "SESSION_EXPIRED") {
+            // Bridge-level failure: fallback to existing server route.
+            const response = await fetch("/api/leetcode", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                mode,
+                titleSlug: problem.titleSlug,
+                questionId: problem.questionId,
+                style: undefined,
+                lang: lcLang,
+                typedCode: code,
+                dataInput,
+                leetcodeSession,
+                csrfToken,
+              }),
+            });
+
+            payload = await response.json() as Record<string, unknown>;
+
+            if (!response.ok) {
+              const serverErrCode = payload.error as string | undefined;
+              const serverMessage = (payload.message as string | undefined) ?? "LeetCode request failed.";
+
+              if (serverErrCode === "SESSION_EXPIRED" || serverErrCode === "MISSING_SESSION") {
+                toast.error(serverMessage);
+                throw new Error(serverMessage);
+              }
+              if (serverErrCode === "RATE_LIMITED" || serverErrCode === "TIMEOUT") {
+                toast.warning(serverMessage);
+                throw new Error(serverMessage);
+              }
+              toast.error(serverMessage);
+              throw new Error(serverMessage);
+            }
+          }
+        } else {
+          const response = await fetch("/api/leetcode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode,
+              titleSlug: problem.titleSlug,
+              questionId: problem.questionId,
+              style: undefined,
+              lang: lcLang,
+              typedCode: code,
+              dataInput,
+              leetcodeSession,
+              csrfToken,
+            }),
+          });
+
+          payload = await response.json() as Record<string, unknown>;
+
+          if (!response.ok) {
+            const errCode = payload.error as string | undefined;
+            const message = (payload.message as string | undefined) ?? "LeetCode request failed.";
+
+            if (errCode === "SESSION_EXPIRED" || errCode === "MISSING_SESSION") {
+              toast.error(message);
+              throw new Error(message);
+            }
+            if (errCode === "RATE_LIMITED" || errCode === "TIMEOUT") {
+              toast.warning(message);
+              throw new Error(message);
+            }
             toast.error(message);
             throw new Error(message);
           }
-          if (errCode === "RATE_LIMITED") {
-            toast.warning(message);
-            throw new Error(message);
-          }
-          if (errCode === "MISSING_SESSION") {
-            toast.error(message);
-            throw new Error(message);
-          }
-          if (errCode === "TIMEOUT") {
-            toast.warning(message);
-            throw new Error(message);
-          }
-          toast.error(message);
-          throw new Error(message);
         }
 
         // ── Map LC response → ExecuteResult ───────────────────────────

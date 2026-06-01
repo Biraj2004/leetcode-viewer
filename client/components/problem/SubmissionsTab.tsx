@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { getSubmissionRefs } from "../../lib/submissionsStore";
 import type { StoredSubmissionRef } from "../../lib/submissionsStore";
+import { detectExtension, requestLeetCodeViaExtension } from "../../lib/extensionApi";
 
 /* ─── Types ──────────────────────────────────────────────────────────────────── */
 
@@ -539,9 +540,30 @@ export function SubmissionsTab({ questionId, titleSlug, refreshKey }: Submission
     setLoading(true);
 
     try {
+      const extAvailable = await detectExtension(2, 200, 450);
+      if (extAvailable) {
+        try {
+          const data = await requestLeetCodeViaExtension({
+            mode: "submission_details",
+            submissionId,
+            titleSlug,
+            questionId,
+            lang: "",
+            typedCode: "",
+          }, 90000) as SubmissionDetail;
+          setDetail(data);
+          return;
+        } catch (error) {
+          const extErr = error as Error & { code?: string };
+          if (extErr.code === "SESSION_EXPIRED" || extErr.code === "MISSING_SESSION") {
+            setError(extErr.message);
+            return;
+          }
+        }
+      }
+
       const session = localStorage.getItem("lv_lc_session") ?? "";
       const csrf = localStorage.getItem("lv_lc_csrf") ?? "";
-
       const res = await fetch("/api/leetcode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -558,12 +580,10 @@ export function SubmissionsTab({ questionId, titleSlug, refreshKey }: Submission
       });
 
       const data = await res.json() as SubmissionDetail & { error?: string; message?: string };
-
       if (!res.ok) {
         setError(data.message ?? `Error: HTTP ${res.status}`);
         return;
       }
-
       setDetail(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error");

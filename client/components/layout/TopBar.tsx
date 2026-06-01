@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { DifficultyBadge } from "../ui/Badge";
 import type { ParsedProblem } from "../../types/ui";
+import { detectExtension } from "../../lib/extensionApi";
 
 // ─── Settings modal ───────────────────────────────────────────────────────────
 
@@ -46,22 +47,14 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [extStatus, setExtStatus] = useState<"unknown" | "found" | "missing">("unknown");
   const [fetchStatus, setFetchStatus] = useState<"idle" | "fetching" | "done" | "error">("idle");
   const [fetchMsg, setFetchMsg] = useState("");
+  const [extProbeVersion, setExtProbeVersion] = useState(0);
 
-  // Detect extension on mount via window.postMessage
+  // Handle async extension responses
   useEffect(() => {
-    let pingInterval: ReturnType<typeof setInterval>;
-    let found = false;
-
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== window) return;
       const msg = event.data;
       if (!msg || typeof msg !== "object") return;
-
-      if (msg.type === "LV_EXT_PONG") {
-        found = true;
-        setExtStatus("found");
-        clearInterval(pingInterval);
-      }
 
       if (msg.type === "LV_EXT_RESP_FETCH") {
         const resp = msg.data;
@@ -83,28 +76,44 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
     window.addEventListener("message", handleMessage);
 
-    // Ping immediately
-    window.postMessage({ type: "LV_EXT_PING" }, "*");
-
-    // Ping every 100ms
-    pingInterval = setInterval(() => {
-      window.postMessage({ type: "LV_EXT_PING" }, "*");
-    }, 100);
-
-    // Timeout
-    const timeout = setTimeout(() => {
-      if (!found) {
-        clearInterval(pingInterval);
-        setExtStatus("missing");
-      }
-    }, 3000);
-
     return () => {
       window.removeEventListener("message", handleMessage);
-      clearInterval(pingInterval);
-      clearTimeout(timeout);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function probeExtension() {
+      setExtStatus("unknown");
+
+      // Quick burst first (for normal open/refresh flow)
+      const immediateFound = await detectExtension(8, 220, 500);
+      if (cancelled) return;
+      if (immediateFound) {
+        setExtStatus("found");
+        return;
+      }
+
+      // Extra background retries (helps right after extension install/update)
+      setExtStatus("missing");
+      for (let i = 0; i < 6; i++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+        if (cancelled) return;
+        const found = await detectExtension(2, 250, 450);
+        if (cancelled) return;
+        if (found) {
+          setExtStatus("found");
+          return;
+        }
+      }
+    }
+
+    probeExtension();
+    return () => {
+      cancelled = true;
+    };
+  }, [extProbeVersion]);
 
   const handleExtFetch = useCallback(() => {
     setFetchStatus("fetching");
@@ -116,6 +125,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     setSession("");
     setCsrf("");
     setFetchMsg("Tokens cleared. Click Save to apply changes.");
+  }, []);
+
+  const handleRefreshExtensionStatus = useCallback(() => {
+    setExtProbeVersion((v) => v + 1);
   }, []);
 
   function handleSave() {
@@ -206,14 +219,34 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   <Puzzle size={14} style={{ color: extStatus === "found" ? "#a6e3a1" : "#6c7086" }} />
                   <span style={{ fontSize: 12, fontWeight: 600, color: "#cdd6f4" }}>Browser Extension</span>
                 </div>
-                <span style={{
-                  fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
-                  background: extStatus === "found" ? "rgba(166,227,161,0.15)" : "rgba(243,139,168,0.12)",
-                  color: extStatus === "found" ? "#a6e3a1" : "#f38ba8",
-                  border: extStatus === "found" ? "1px solid rgba(166,227,161,0.3)" : "1px solid rgba(243,139,168,0.25)"
-                }}>
-                  {extStatus === "found" ? "Detected" : extStatus === "missing" ? "Not found" : "Checking…"}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
+                    background: extStatus === "found" ? "rgba(166,227,161,0.15)" : "rgba(243,139,168,0.12)",
+                    color: extStatus === "found" ? "#a6e3a1" : "#f38ba8",
+                    border: extStatus === "found" ? "1px solid rgba(166,227,161,0.3)" : "1px solid rgba(243,139,168,0.25)"
+                  }}>
+                    {extStatus === "found" ? "Detected" : extStatus === "missing" ? "Not found" : "Checking…"}
+                  </span>
+                  <button
+                    onClick={handleRefreshExtensionStatus}
+                    title="Re-check extension"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 6,
+                      border: "1px solid #313244",
+                      background: "#1e1e2e",
+                      color: "#a6adc8",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
               </div>
               <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {extStatus !== "found" && (
